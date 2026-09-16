@@ -30,6 +30,10 @@ import sys
 SEVERITIES = ("critical", "warning", "suggestion")
 VERDICTS = ("approve", "approve_with_comments", "changes_requested")
 
+# Presentation: GitHub alert boxes for inline comments, emoji for list items.
+SEVERITY_ALERT = {"critical": "CAUTION", "warning": "WARNING", "suggestion": "TIP"}
+SEVERITY_EMOJI = {"critical": "🔴", "warning": "🟡", "suggestion": "🟢"}
+
 HUNK_RE = re.compile(r"^@@ -(?:\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 FENCE_RE = re.compile(r"```[ \t]*(?:json|JSON)?[ \t]*\n(.*?)\n[ \t]*```", re.DOTALL)
 
@@ -213,7 +217,20 @@ def decide_event(findings, notes, verdict, source, no_approve):
 
 def format_finding(f):
     loc = f"{f['file']}:{f['line']}" if f["line"] is not None else f["file"]
-    return f"**[{f['severity']}]** `{loc}` — {f['desc']}"
+    sev = f["severity"]
+    return f"{SEVERITY_EMOJI[sev]} **{sev.capitalize()}** `{loc}` — {f['desc']}"
+
+
+def format_inline(f):
+    sev = f["severity"]
+    body = "\n".join(f"> {ln}" if ln else ">" for ln in f["desc"].splitlines())
+    return f"> [!{SEVERITY_ALERT[sev]}]\n> **{sev.capitalize()}**\n{body}"
+
+
+def format_counts(severities):
+    return " · ".join(
+        f"{SEVERITY_EMOJI[s]} {severities.count(s)} {s}" for s in SEVERITIES
+    )
 
 
 def build_review(model_output, diff_text, commit, no_approve=False):
@@ -239,7 +256,7 @@ def build_review(model_output, diff_text, commit, no_approve=False):
                 "path": f["file"],
                 "line": f["line"],
                 "side": "RIGHT",
-                "body": f"**[{f['severity']}]** {f['desc']}",
+                "body": format_inline(f),
             })
         elif f["line"] is None:
             body_findings.append(format_finding(f))
@@ -250,6 +267,8 @@ def build_review(model_output, diff_text, commit, no_approve=False):
     event = decide_event(findings, notes, verdict, source, no_approve)
 
     parts = []
+    if findings:
+        parts.append(format_counts([f["severity"] for f in findings]))
     if summary:
         parts.append(f"### Summary\n{summary}")
     if inline:

@@ -92,10 +92,12 @@ class Details(unittest.TestCase):
             "path": "auth/session.js",
             "line": 2,
             "side": "RIGHT",
-            "body": "**[critical]** Math.random() is not cryptographically secure. Use crypto.randomBytes(32).",
+            "body": "> [!CAUTION]\n> **Critical**\n> Math.random() is not cryptographically secure. Use crypto.randomBytes(32).",
         }])
         self.assertIn("`auth/session.js` — Sessions never expire.", payload["body"])
         self.assertIn("### Verdict\nChanges requested", payload["body"])
+        self.assertIn("🟡 **Warning** `auth/session.js` — Sessions never expire.", payload["body"])
+        self.assertTrue(payload["body"].startswith("🔴 1 critical · 🟡 1 warning · 🟢 0 suggestion"))
 
     def test_path_prefixes_and_string_lines_normalized(self):
         payload, _ = review("json_bad_line.txt")
