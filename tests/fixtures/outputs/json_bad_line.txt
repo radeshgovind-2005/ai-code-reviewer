@@ -1,0 +1,6 @@
+```json
+{"summary": "x", "findings": [
+  {"severity": "warning", "file": "src/app.js", "line": 99, "description": "Line not in the diff."},
+  {"severity": "warning", "file": "b/src/app.js", "line": "43", "description": "String line number, b/ prefix."}
+], "verdict": "approve_with_comments"}
+```

@@ -1,0 +1,6 @@
+```json
+{"summary": "x", "findings": [
+  {"severity": "suggestion", "file": "src/app.js", "line": 11, "description": "Cites a removed line number that is also a context line."},
+  {"severity": "suggestion", "file": "old.txt", "line": 1, "description": "Deleted file has no new-side lines."}
+], "verdict": "approve_with_comments"}
+```

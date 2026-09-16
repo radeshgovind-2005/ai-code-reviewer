@@ -1,0 +1,8 @@
+Example of the schema:
+```json
+{"summary": "example", "findings": [], "verdict": "approve"}
+```
+Actual review:
+```json
+{"summary": "real", "findings": [{"severity": "critical", "file": "auth/session.js", "line": 2, "description": "Weak RNG."}], "verdict": "changes_requested"}
+```

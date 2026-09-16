@@ -45,16 +45,29 @@ Open a PR — it gets reviewed automatically.
 
 ```
 ai-code-reviewer/
-├── .github/
-│   └── workflows/
-│       └── review.yml        # the reusable workflow other repos call
+├── .github/workflows/
+│   ├── review.yml             # the reusable workflow other repos call
+│   └── ci.yml                 # tests for this repo
+├── agents/reviewer.md         # what to flag / not flag + JSON output contract
+├── review-config.json         # tier thresholds, sensitive paths, bot_can_approve
 ├── opencode.json              # model + provider config
-├── agents/
-│   └── reviewer.md            # what to flag / not flag
 ├── scripts/
-│   └── run-review.sh          # fetches diff, runs opencode, posts PR comment
-└── README.md
+│   ├── run-review.sh          # orchestrates: diff → tier → prompt → model → post review
+│   ├── tier-pr.sh             # trivial / lite / full from diff stats
+│   ├── annotate-diff.py       # prefixes diff lines with real line numbers
+│   └── post-review.py         # model JSON → GitHub PR review payload
+└── tests/
+    ├── test_post_review.py
+    └── fixtures/              # sample diff + recorded model outputs
 ```
+
+## Development
+
+```
+python3 -m unittest discover -s tests -v
+```
+
+Every tricky model output (bad JSON, wrong line numbers, contradicting verdicts, the old markdown format) lives as a file in `tests/fixtures/outputs/` with its expected event in `CASES`. When the reviewer misbehaves on a real PR, save the model output there first, then fix.
 
 ## Model options
 
@@ -73,13 +86,13 @@ Edit `agents/reviewer.md`. Be explicit about what **not** to flag — this is th
 
 ## Review events & approvals
 
-The bot posts a real PR review, not a plain comment:
+The model must answer with a JSON object (schema in `agents/reviewer.md`). The bot turns it into a real PR review, not a plain comment:
 
 | Situation | Event |
 |---|---|
 | Any `critical` finding, or verdict "changes requested" | `REQUEST_CHANGES` |
-| Warnings/suggestions, unparsed notes, or output it can't parse | `COMMENT` |
-| "No issues found." + verdict "approve" | `APPROVE` |
+| Warnings/suggestions, malformed findings, legacy markdown output, or output it can't parse | `COMMENT` |
+| Valid JSON, no findings, verdict `approve` | `APPROVE` |
 | Trivial tier (model skipped) | `APPROVE` |
 
 Before each post, the bot dismisses its own earlier `APPROVED` / `CHANGES_REQUESTED` reviews so a stale verdict never stays in place.

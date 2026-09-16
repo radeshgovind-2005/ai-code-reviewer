@@ -1,0 +1,6 @@
+```json
+{"summary": "x", "findings": [
+  {"severity": "blocker", "file": "src/app.js", "line": 12, "description": "Unknown severity."},
+  "just a string"
+], "verdict": "approve"}
+```

@@ -1,0 +1,5 @@
+```json
+{"summary": "Wires JSON body parsing.", "findings": [
+  {"severity": "suggestion", "file": "./src/app.js", "line": 12, "description": "Consider a body size limit."}
+], "verdict": "approve_with_comments"}
+```
