@@ -13,20 +13,31 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout target repo
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          path: target
+
+      - name: Checkout ai-code-reviewer
+        uses: actions/checkout@v4
+        with:
+          repository: radeshgovind-2005/ai-code-reviewer
+          ref: main
+          path: reviewer
 
       - name: Install OpenCode
         run: curl -fsSL https://opencode.ai/install | bash
 
       - name: Run review
+        working-directory: target
         env:
           GITHUB_TOKEN: ${{ github.token }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REVIEWER_HOME: ${{ github.workspace }}/reviewer
         run: |
-          chmod +x scripts/run-review.sh
-          ./scripts/run-review.sh
+          chmod +x "$REVIEWER_HOME/scripts/run-review.sh"
+          "$REVIEWER_HOME/scripts/run-review.sh"

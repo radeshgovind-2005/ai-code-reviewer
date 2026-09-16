@@ -36,7 +36,7 @@ fi
 
 # 2. Build the prompt: reviewer instructions + diff.
 PROMPT_FILE="$(mktemp)"
-cat agents/reviewer.md > "${PROMPT_FILE}"
+cat "${REVIEWER_HOME:?REVIEWER_HOME not set}/agents/reviewer.md" > "${PROMPT_FILE}"
 echo "" >> "${PROMPT_FILE}"
 echo "## Diff to review" >> "${PROMPT_FILE}"
 echo '```diff' >> "${PROMPT_FILE}"
