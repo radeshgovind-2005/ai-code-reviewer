@@ -1,0 +1,10 @@
+### Summary
+Adds a new session creation utility. The token generation uses `Math.random()`, which is cryptographically insecure.
+
+### Findings
+- **[critical]** auth/session.js:2 — `Math.random()` is not cryptographically secure.
+- **[warning]** auth/session.js:2 — The token is only ~10 characters.
+- **[warning]** auth/session.js — No expiry is enforced.
+
+### Verdict
+Changes requested.

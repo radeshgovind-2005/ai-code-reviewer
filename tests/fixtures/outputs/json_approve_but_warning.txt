@@ -1,0 +1,5 @@
+```json
+{"summary": "x", "findings": [
+  {"severity": "warning", "file": "src/app.js", "line": 12, "description": "Missing error handling."}
+], "verdict": "approve"}
+```

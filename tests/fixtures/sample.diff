@@ -1,0 +1,33 @@
+diff --git a/auth/session.js b/auth/session.js
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/auth/session.js
+@@ -0,0 +1,5 @@
++function createSession(userId) {
++  const token = Math.random().toString(36).slice(2);
++  return { userId, token, createdAt: Date.now() };
++}
++module.exports = { createSession };
+diff --git a/src/app.js b/src/app.js
+index 2222222..3333333 100644
+--- a/src/app.js
++++ b/src/app.js
+@@ -10,4 +10,5 @@ const express = require('express');
+ const app = express();
+-app.use(logger);
++app.use(logger());
++app.use(express.json());
+ app.listen(3000);
+@@ -40,3 +41,3 @@ function health(req, res) {
+   res.send('ok');
+-  return;
++  return res;
+ }
+diff --git a/old.txt b/old.txt
+deleted file mode 100644
+--- a/old.txt
++++ /dev/null
+@@ -1,2 +0,0 @@
+-gone
+-bye

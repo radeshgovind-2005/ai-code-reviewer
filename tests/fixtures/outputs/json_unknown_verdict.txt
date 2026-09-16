@@ -1,0 +1,3 @@
+```json
+{"summary": "x", "findings": [], "verdict": "looks good to me"}
+```

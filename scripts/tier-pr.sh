@@ -21,7 +21,10 @@ else
   CONFIG_FILE="${REVIEWER_HOME}/review-config.json"
 fi
 
-SENSITIVE_PATHS=($(jq -r '.sensitive_paths[]' "${CONFIG_FILE}"))
+SENSITIVE_PATHS=()
+while IFS= read -r p; do
+  [ -n "$p" ] && SENSITIVE_PATHS+=("$p")
+done < <(jq -r '.sensitive_paths[]' "${CONFIG_FILE}")
 TRIVIAL_MAX_LINES=$(jq -r '.thresholds.trivial.max_lines' "${CONFIG_FILE}")
 TRIVIAL_MAX_FILES=$(jq -r '.thresholds.trivial.max_files' "${CONFIG_FILE}")
 LITE_MAX_LINES=$(jq -r '.thresholds.lite.max_lines' "${CONFIG_FILE}")

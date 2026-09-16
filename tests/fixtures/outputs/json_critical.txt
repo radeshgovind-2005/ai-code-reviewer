@@ -1,0 +1,12 @@
+I reviewed the diff. Here is my review:
+
+```json
+{
+  "summary": "Adds a session helper; token generation is insecure.",
+  "findings": [
+    {"severity": "critical", "file": "auth/session.js", "line": 2, "description": "Math.random() is not cryptographically secure. Use crypto.randomBytes(32)."},
+    {"severity": "warning", "file": "auth/session.js", "line": null, "description": "Sessions never expire."}
+  ],
+  "verdict": "changes_requested"
+}
+```
