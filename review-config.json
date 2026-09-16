@@ -1,0 +1,12 @@
+{
+  "sensitive_paths": [
+    "auth/",
+    "payments/",
+    "secrets/",
+    ".github/workflows/"
+  ],
+  "thresholds": {
+    "trivial": { "max_lines": 10, "max_files": 2 },
+    "lite": { "max_lines": 100, "max_files": 10 }
+  }
+}
