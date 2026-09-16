@@ -42,9 +42,13 @@ echo "## Diff to review" >> "${PROMPT_FILE}"
 echo '```diff' >> "${PROMPT_FILE}"
 cat "${DIFF_FILE}" >> "${PROMPT_FILE}"
 echo '```' >> "${PROMPT_FILE}"
+echo "" >> "${PROMPT_FILE}"
+echo "Review the diff above per your instructions." >> "${PROMPT_FILE}"
 
-# 3. Run OpenCode non-interactively.
-REVIEW_OUTPUT="$(opencode run -f "${PROMPT_FILE}" "Review the diff above per your instructions.")"
+# 3. Run OpenCode non-interactively. Pass the whole prompt as a single
+# positional argument -- combining -f with a trailing instruction string
+# caused OpenCode's CLI to misparse the instruction as a second filename.
+REVIEW_OUTPUT="$(opencode run "$(cat "${PROMPT_FILE}")")"
 
 # 4. Post as a single PR comment.
 echo "${REVIEW_OUTPUT}" | gh pr comment "${PR_NUMBER}" --body-file -
