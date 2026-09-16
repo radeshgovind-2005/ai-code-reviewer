@@ -11,6 +11,11 @@ on:
         type: string
         required: false
         default: main
+      opencode_version:
+        description: Exact opencode-ai npm version to install (pinned for reproducible reviews).
+        type: string
+        required: false
+        default: "1.18.31"
       model_timeout:
         description: Seconds before the model call is abandoned.
         type: number
@@ -23,6 +28,10 @@ on:
 jobs:
   review:
     runs-on: ubuntu-latest
+    # A newer push supersedes an in-flight review of the same PR.
+    concurrency:
+      group: ai-review-${{ github.repository }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
     timeout-minutes: 20
     permissions:
       contents: read
@@ -41,8 +50,12 @@ jobs:
           ref: ${{ inputs.reviewer_ref }}
           path: reviewer
 
-      - name: Install OpenCode
-        run: curl -fsSL https://opencode.ai/install | bash
+      - name: Install OpenCode (pinned)
+        env:
+          OPENCODE_VERSION: ${{ inputs.opencode_version }}
+        run: |
+          npm install -g "opencode-ai@${OPENCODE_VERSION}"
+          opencode --version
 
       - name: Run review
         working-directory: target
@@ -54,6 +67,36 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           REVIEWER_HOME: ${{ github.workspace }}/reviewer
           MODEL_TIMEOUT: ${{ inputs.model_timeout }}
+          AI_REVIEW_MARKER: ${{ runner.temp }}/ai-review-reported
         run: |
           chmod +x "$REVIEWER_HOME/scripts/run-review.sh"
           "$REVIEWER_HOME/scripts/run-review.sh"
+
+      # Fail closed even when the job dies before/around run-review.sh (checkout
+      # or install failed, script killed). Skipped if the script already
+      # posted its own review or failure review.
+      - name: Report review did not complete
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          MARKER: ${{ runner.temp }}/ai-review-reported
+        run: |
+          if [ -f "$MARKER" ]; then
+            echo "run-review.sh already reported; nothing to do."
+            exit 0
+          fi
+          # Don't leave an older bot approval standing on the new commits.
+          for id in $(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --paginate \
+              --jq '.[] | select(.user.login == "github-actions[bot]" and .state == "APPROVED") | .id'); do
+            gh api --method PUT "repos/${REPO}/pulls/${PR_NUMBER}/reviews/${id}/dismissals" \
+              -f message="AI review of ${HEAD_SHA:0:7} did not complete." > /dev/null || true
+          done
+          gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --method POST \
+            -f commit_id="${HEAD_SHA}" -f event=COMMENT \
+            -f body="### ⚠️ AI review did not complete
+
+          The review job failed before a review could be posted (setup step or script crash). This PR has **not** been reviewed by the AI reviewer. See the [workflow run](${RUN_URL}) for details, then re-run the job."

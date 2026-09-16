@@ -47,8 +47,9 @@ exit 0
 """
 
 FAKE_OPENCODE = r"""#!/usr/bin/env bash
-# The prompt is the last argument.
-printf '%s' "${@: -1}" > "$FAKE_DIR/prompt.txt"
+# Real opencode appends piped stdin to the message; record both.
+printf '%s' "$*" > "$FAKE_DIR/args.txt"
+cat > "$FAKE_DIR/prompt.txt"
 case "${FAKE_OPENCODE_MODE:-ok}" in
   ok)      cat "$FAKE_DIR/model-output.txt" ;;
   fail)    echo "provider error" >&2; exit 3 ;;
@@ -162,13 +163,67 @@ class RunReview(unittest.TestCase):
         self.assertLess(dismiss, post)
         self.assertIn("reviews/111/dismissals", calls[dismiss])
 
-    def test_trivial_skips_model(self):
+    def test_trivial_still_calls_model(self):
+        self.write("README.md", "hello\nworld\n")
+        self.commit("pr")
+        r = self.run_review(CRITICAL.replace("src/token.js", "README.md"))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("tier=trivial", r.stdout)
+        self.assertIn("**trivial** tier", (self.fake / "prompt.txt").read_text())
+        self.assertEqual([p["event"] for p in self.posted()], ["REQUEST_CHANGES"])
+
+    def test_lockfile_does_not_count_toward_tier(self):
+        self.write("package-lock.json", BIG_CHANGE * 20)
         self.write("README.md", "hello\nworld\n")
         self.commit("pr")
         r = self.run_review(CLEAN)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertFalse((self.fake / "prompt.txt").exists())
+        self.assertIn("tier=trivial", r.stdout)
+        self.assertNotIn("package-lock.json", (self.fake / "prompt.txt").read_text())
+
+    def test_success_touches_marker(self):
+        self.write("src/values.js", BIG_CHANGE)
+        self.commit("pr")
+        marker = self.fake / "marker"
+        r = self.run_review(CLEAN, AI_REVIEW_MARKER=str(marker))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue(marker.exists())
+
+    def test_failure_review_touches_marker(self):
+        self.write("src/values.js", BIG_CHANGE)
+        self.commit("pr")
+        marker = self.fake / "marker"
+        r = self.run_review(FAKE_OPENCODE_MODE="fail", AI_REVIEW_MARKER=str(marker))
+        self.assertNotEqual(r.returncode, 0)
+        self.assertTrue(marker.exists())
+
+    # -- large diffs -----------------------------------------------------
+    def test_large_diff_goes_via_stdin_not_argv(self):
+        big = "".join(f"const value_{i} = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';\n" for i in range(4000))
+        self.write("src/big.js", big)  # ~200 KB, over Linux's per-arg limit
+        self.commit("pr")
+        r = self.run_review(CLEAN)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertLess(len((self.fake / "args.txt").read_text()), 1000)
+        self.assertIn("const value_3999", (self.fake / "prompt.txt").read_text())
         self.assertEqual([p["event"] for p in self.posted()], ["APPROVE"])
+
+    def test_oversized_diff_is_capped_and_never_approves(self):
+        self.write("review-config.json", json.dumps({"max_diff_bytes": 3000}))
+        self.base = self.commit("base config")
+        self.write("src/a.js", BIG_CHANGE)
+        self.write("src/b.js", BIG_CHANGE * 10)
+        self.commit("pr")
+        r = self.run_review(CLEAN)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        prompt = (self.fake / "prompt.txt").read_text()
+        self.assertIn("Truncation note", prompt)
+        self.assertIn("- src/b.js", prompt)
+        [p] = self.posted()
+        self.assertEqual(p["event"], "COMMENT")
+        self.assertIn("Partial review", p["body"])
+        self.assertIn("`src/b.js`", p["body"])
+        self.assertIn("truncated=true", r.stdout)
 
     # -- sensitive paths -------------------------------------------------
     def test_sensitive_clean_never_approves(self):
@@ -178,6 +233,26 @@ class RunReview(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual([p["event"] for p in self.posted()], ["COMMENT"])
         self.assertIn("sensitive=true", r.stdout)
+
+    def test_nested_sensitive_dir_never_approves(self):
+        self.write("src/auth/session.js", "module.exports = {};\n")
+        self.commit("pr")
+        r = self.run_review(CLEAN)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("sensitive=true", r.stdout)
+        self.assertEqual([p["event"] for p in self.posted()], ["COMMENT"])
+
+    def test_sensitive_glob_matches_any_depth(self):
+        self.write("deploy/certs/server.pem", "x\n")
+        self.commit("pr")
+        r = self.run_review(CLEAN)
+        self.assertIn("sensitive=true", r.stdout)
+
+    def test_similar_name_is_not_sensitive(self):
+        self.write("src/author.js", BIG_CHANGE)
+        self.commit("pr")
+        r = self.run_review(CLEAN)
+        self.assertIn("sensitive=false", r.stdout)
 
     def test_pr_cannot_loosen_its_own_config(self):
         # Base config: default sensitive paths. The PR tries to empty them,

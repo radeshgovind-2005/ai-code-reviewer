@@ -1,11 +1,14 @@
 {
   "bot_can_approve": true,
+  "max_diff_bytes": 400000,
   "sensitive_paths": [
     "auth/",
     "payments/",
     "secrets/",
     ".github/workflows/",
-    "review-config.json"
+    "review-config.json",
+    "*.pem",
+    "*.key"
   ],
   "thresholds": {
     "trivial": { "max_lines": 10, "max_files": 2 },

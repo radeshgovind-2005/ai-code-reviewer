@@ -14,11 +14,20 @@ set -euo pipefail
 #                          one read from the BASE commit, so a PR can't loosen
 #                          its own review rules
 # Run from inside the target repo's working directory.
+#
+# Size stats ignore noise (lockfiles, dist, vendor, ...: scripts/diff-excludes.txt)
+# so a lockfile bump doesn't push a PR to full. The sensitive-path check looks
+# at EVERY changed file, noise included -- it errs on the side of caution.
+#
+# Sensitive path patterns (review-config.json "sensitive_paths"):
+#   "auth/"          directory named auth at any depth (auth/x, src/auth/x)
+#   "src/auth/"      that directory path at any depth
+#   "Dockerfile"     file with that name at any depth
+#   "*.pem"          anything containing * ? or [ is a shell glob on the full
+#                    path; * also matches /, so "*.pem" matches at any depth
 
 REVIEWER_HOME="${REVIEWER_HOME:?REVIEWER_HOME not set}"
 
-# Config resolution: consuming repo's own review-config.json wins; else
-# fall back to this reviewer repo's default.
 if [ -z "${CONFIG_FILE:-}" ]; then
   if [ -f "review-config.json" ]; then
     CONFIG_FILE="review-config.json"
@@ -27,36 +36,45 @@ if [ -z "${CONFIG_FILE:-}" ]; then
   fi
 fi
 
+EXCLUDES=()
+while IFS= read -r p; do
+  [[ -z "$p" || "$p" == \#* ]] && continue
+  EXCLUDES+=("$p")
+done < "${REVIEWER_HOME}/scripts/diff-excludes.txt"
+
 SENSITIVE_PATHS=()
 while IFS= read -r p; do
   [ -n "$p" ] && SENSITIVE_PATHS+=("$p")
-done < <(jq -r '.sensitive_paths[]' "${CONFIG_FILE}")
+done < <(jq -r '(.sensitive_paths // [])[]' "${CONFIG_FILE}")
 TRIVIAL_MAX_LINES=$(jq -r '.thresholds.trivial.max_lines' "${CONFIG_FILE}")
 TRIVIAL_MAX_FILES=$(jq -r '.thresholds.trivial.max_files' "${CONFIG_FILE}")
 LITE_MAX_LINES=$(jq -r '.thresholds.lite.max_lines' "${CONFIG_FILE}")
 LITE_MAX_FILES=$(jq -r '.thresholds.lite.max_files' "${CONFIG_FILE}")
 
-CHANGED_FILES_RAW="$(git diff --name-only "${BASE_SHA}...${HEAD_SHA}")"
-FILES_CHANGED="$(echo "${CHANGED_FILES_RAW}" | grep -c . || true)"
+# Returns 0 if path $1 matches sensitive pattern $2.
+matches_sensitive() {
+  local f="$1" p="$2"
+  if [[ "$p" == *[\*\?\[]* ]]; then
+    # shellcheck disable=SC2053  # intentional glob match
+    [[ "$f" == $p ]]
+  elif [[ "$p" == */ ]]; then
+    [[ "$f" == "$p"* || "$f" == */"$p"* ]]
+  else
+    [[ "$f" == "$p" || "$f" == */"$p" || "$f" == "$p"/* || "$f" == */"$p"/* ]]
+  fi
+}
 
-# Lines changed = added + removed, from --shortstat.
-SHORTSTAT="$(git diff --shortstat "${BASE_SHA}...${HEAD_SHA}")"
-LINES_ADDED="$(echo "${SHORTSTAT}" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' || echo 0)"
-LINES_REMOVED="$(echo "${SHORTSTAT}" | grep -oE '[0-9]+ deletion' | grep -oE '[0-9]+' || echo 0)"
-LINES_CHANGED=$((LINES_ADDED + LINES_REMOVED))
-
-# Sensitive-path check: any changed file matching any configured prefix
-# forces full tier, regardless of size.
+ALL_CHANGED="$(git diff --name-only "${BASE_SHA}...${HEAD_SHA}")"
 SENSITIVE_HIT=""
 while IFS= read -r f; do
   [ -z "$f" ] && continue
-  for prefix in "${SENSITIVE_PATHS[@]}"; do
-    if [[ "$f" == "$prefix"* ]]; then
+  for pattern in "${SENSITIVE_PATHS[@]}"; do
+    if matches_sensitive "$f" "$pattern"; then
       SENSITIVE_HIT="$f"
       break 2
     fi
   done
-done <<< "${CHANGED_FILES_RAW}"
+done <<< "${ALL_CHANGED}"
 
 if [ -n "${SENSITIVE_HIT}" ]; then
   echo "TIER=full"
@@ -64,6 +82,12 @@ if [ -n "${SENSITIVE_HIT}" ]; then
   echo "REASON=touches sensitive path (${SENSITIVE_HIT})"
   exit 0
 fi
+
+FILES_CHANGED="$(git diff --name-only "${BASE_SHA}...${HEAD_SHA}" -- . "${EXCLUDES[@]}" | grep -c . || true)"
+SHORTSTAT="$(git diff --shortstat "${BASE_SHA}...${HEAD_SHA}" -- . "${EXCLUDES[@]}")"
+LINES_ADDED="$(echo "${SHORTSTAT}" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' || echo 0)"
+LINES_REMOVED="$(echo "${SHORTSTAT}" | grep -oE '[0-9]+ deletion' | grep -oE '[0-9]+' || echo 0)"
+LINES_CHANGED=$((LINES_ADDED + LINES_REMOVED))
 
 if [ "${FILES_CHANGED}" -le "${TRIVIAL_MAX_FILES}" ] && [ "${LINES_CHANGED}" -le "${TRIVIAL_MAX_LINES}" ]; then
   echo "TIER=trivial"
