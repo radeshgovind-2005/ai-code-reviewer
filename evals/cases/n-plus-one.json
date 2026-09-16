@@ -1,0 +1,28 @@
+{
+  "description": "Query per customer inside a loop over all customers.",
+  "tier": "full",
+  "before": {
+    "app/report.py": "from .db import session, Customer, Order\n"
+  },
+  "after": {
+    "app/report.py": "from .db import session, Customer, Order\n\n\ndef revenue_report():\n    rows = []\n    for customer in session.query(Customer).all():\n        orders = session.query(Order).filter(Order.customer_id == customer.id).all()\n        rows.append((customer.name, sum(o.amount for o in orders)))\n    return rows\n"
+  },
+  "expect": {
+    "must_find": [
+      {
+        "file": "app/report.py",
+        "line": 7,
+        "line_tolerance": 2,
+        "keywords": [
+          "n+1",
+          "n + 1",
+          "loop",
+          "query",
+          "batch",
+          "join"
+        ],
+        "min_severity": "suggestion"
+      }
+    ]
+  }
+}

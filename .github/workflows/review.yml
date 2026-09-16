@@ -28,7 +28,8 @@ on:
         default: true
     secrets:
       LLM_API_KEY:
-        required: true
+        description: Provider API key. Without it every reviewer runs on the free-tier model and the bot never approves.
+        required: false
 
 permissions: {}
 
@@ -143,8 +144,20 @@ jobs:
           REVIEWER_HOME: ${{ github.workspace }}/reviewer
           MODEL_TIMEOUT: ${{ inputs.model_timeout }}
           SCANNER_FINDINGS: ${{ runner.temp }}/scan/scanner-findings.json
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          REVIEW_ARTIFACTS_DIR: ${{ runner.temp }}/review-artifacts
           AI_REVIEW_MARKER: ${{ runner.temp }}/ai-review-reported
         run: bash "$REVIEWER_HOME/scripts/run-review.sh"
+
+      - name: Upload review artifacts (prompts, per-reviewer metrics)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ai-review
+          path: ${{ runner.temp }}/review-artifacts
+          if-no-files-found: ignore
+          retention-days: 14
 
       # Fail closed even when the job dies before/around run-review.sh (checkout
       # or install failed, script killed). Skipped if the script already

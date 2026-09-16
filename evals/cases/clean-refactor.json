@@ -1,0 +1,17 @@
+{
+  "description": "Pure refactor, no behaviour change. Nothing should be flagged.",
+  "before": {
+    "app/pricing.py": "def price(items, discount):\n    total = 0\n    for item in items:\n        total = total + item[\"price\"] * item[\"qty\"]\n    if discount:\n        total = total * (1 - discount)\n    return round(total, 2)\n"
+  },
+  "after": {
+    "app/pricing.py": "def _subtotal(items):\n    return sum(item[\"price\"] * item[\"qty\"] for item in items)\n\n\ndef price(items, discount):\n    total = _subtotal(items)\n    if discount:\n        total *= 1 - discount\n    return round(total, 2)\n"
+  },
+  "expect": {
+    "must_find": [],
+    "max_false_positives": 0,
+    "verdict_in": [
+      "approve",
+      "approve_with_comments"
+    ]
+  }
+}

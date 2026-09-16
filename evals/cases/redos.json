@@ -1,0 +1,25 @@
+{
+  "description": "Catastrophic backtracking regex on user input.",
+  "tier": "full",
+  "before": {
+    "app/validate.py": "import re\n"
+  },
+  "after": {
+    "app/validate.py": "import re\n\nEMAIL = re.compile(r\"^([a-zA-Z0-9]+)*@example\\.com$\")\n\n\ndef is_company_email(value: str) -> bool:\n    \"\"\"value comes straight from the signup form.\"\"\"\n    return bool(EMAIL.match(value))\n"
+  },
+  "expect": {
+    "must_find": [
+      {
+        "file": "app/validate.py",
+        "line": 3,
+        "keywords": [
+          "backtrack",
+          "redos",
+          "catastrophic",
+          "exponential"
+        ],
+        "min_severity": "suggestion"
+      }
+    ]
+  }
+}

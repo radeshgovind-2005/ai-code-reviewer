@@ -134,9 +134,10 @@ def parse_json_review(obj):
         if sev not in SEVERITIES or not desc or not file_:
             notes.append(f"Malformed finding: {json.dumps(item)[:300]}")
             continue
-        findings.append(
-            {"severity": sev, "file": normalize_path(file_), "line": line, "desc": desc}
-        )
+        finding = {"severity": sev, "file": normalize_path(file_), "line": line, "desc": desc}
+        if isinstance(item.get("agent"), str) and item["agent"].strip():
+            finding["agent"] = item["agent"].strip()[:40]
+        findings.append(finding)
 
     verdict = str(obj.get("verdict", "")).strip().lower().replace(" ", "_")
     if verdict not in VERDICTS:
@@ -215,16 +216,20 @@ def decide_event(findings, notes, verdict, source, no_approve):
     return "COMMENT" if no_approve else "APPROVE"
 
 
+def agent_suffix(f):
+    return f" · _{f['agent']}_" if f.get("agent") else ""
+
+
 def format_finding(f):
     loc = f"{f['file']}:{f['line']}" if f["line"] is not None else f["file"]
     sev = f["severity"]
-    return f"{SEVERITY_EMOJI[sev]} **{sev.capitalize()}** `{loc}` — {f['desc']}"
+    return f"{SEVERITY_EMOJI[sev]} **{sev.capitalize()}**{agent_suffix(f)} `{loc}` — {f['desc']}"
 
 
 def format_inline(f):
     sev = f["severity"]
     body = "\n".join(f"> {ln}" if ln else ">" for ln in f["desc"].splitlines())
-    return f"> [!{SEVERITY_ALERT[sev]}]\n> **{sev.capitalize()}**\n{body}"
+    return f"> [!{SEVERITY_ALERT[sev]}]\n> **{sev.capitalize()}**{agent_suffix(f)}\n{body}"
 
 
 def format_counts(severities):

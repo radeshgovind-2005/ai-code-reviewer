@@ -1,0 +1,27 @@
+{
+  "description": "Parameter renamed; README still documents the old one.",
+  "tier": "lite",
+  "before": {
+    "lib/fetch.py": "def fetch(url, timeout=10):\n    return url, timeout\n",
+    "README.md": "# fetch\n\n`fetch(url, timeout=10)` downloads `url`, giving up after `timeout` seconds.\n"
+  },
+  "after": {
+    "lib/fetch.py": "def fetch(url, deadline_s=10.0, retries=3):\n    return url, deadline_s, retries\n",
+    "README.md": "# fetch\n\n`fetch(url, timeout=10)` downloads `url`, giving up after `timeout` seconds.\n\nNow faster!\n"
+  },
+  "expect": {
+    "must_find": [
+      {
+        "file": "README.md",
+        "keywords": [
+          "timeout",
+          "deadline",
+          "retries",
+          "outdated",
+          "document"
+        ],
+        "min_severity": "suggestion"
+      }
+    ]
+  }
+}

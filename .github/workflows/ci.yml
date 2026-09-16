@@ -37,6 +37,23 @@ jobs:
       - name: Ruff
         run: pipx run ruff==0.16.8 check scripts tests evals
 
+  opencode-integration:
+    # Real pinned OpenCode against a local mock model server: stdin prompt,
+    # JSON events, per-agent models, and the hardening against hostile PRs.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install OpenCode (same pin as review.yml)
+        run: |
+          version="$(sed -n 's/^ *default: "\([0-9.]*\)".*/\1/p' .github/workflows/review.yml | head -1)"
+          npm install -g "opencode-ai@${version}"
+      - name: Integration test
+        env:
+          OPENCODE_INTEGRATION: "1"
+        run: python3 -m unittest tests.test_opencode_integration -v
+
   lint-workflows:
     runs-on: ubuntu-latest
     steps:
