@@ -44,6 +44,40 @@ REASON="$(echo "${TIER_OUTPUT}" | grep '^REASON=' | cut -d= -f2-)"
 
 REVIEW_SUMMARY_EXTRA=""
 
+# Config resolution mirrors tier-pr.sh: consuming repo's file wins.
+if [ -f "review-config.json" ]; then
+  CONFIG_FILE="review-config.json"
+else
+  CONFIG_FILE="${REVIEWER_HOME}/review-config.json"
+fi
+# Whether the bot may submit APPROVE reviews. If your branch protection
+# counts github-actions approvals, this is what lets PRs merge -- set it to
+# false to require a human approval on every PR.
+BOT_CAN_APPROVE="$(jq -r 'if .bot_can_approve == false then "false" else "true" end' "${CONFIG_FILE}")"
+BOT_LOGIN="${BOT_LOGIN:-github-actions[bot]}"
+REVIEWS_API="repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/reviews"
+
+# Dismiss this bot's earlier APPROVED / CHANGES_REQUESTED reviews so re-runs
+# and new pushes don't leave a stale verdict (e.g. an old approval) standing.
+# COMMENTED reviews can't be dismissed via the API; they're left as history.
+dismiss_previous_reviews() {
+  local ids
+  ids="$(gh api "${REVIEWS_API}" --paginate \
+    --jq ".[] | select(.user.login == \"${BOT_LOGIN}\" and (.state == \"APPROVED\" or .state == \"CHANGES_REQUESTED\")) | .id" \
+    2>/dev/null || true)"
+  for id in ${ids}; do
+    gh api --method PUT "${REVIEWS_API}/${id}/dismissals" \
+      -f message="Superseded by a newer AI review of ${HEAD_SHA:0:7}." > /dev/null \
+      || echo "warning: could not dismiss previous review ${id}" >&2
+  done
+}
+
+post_review() {
+  local payload_file="$1"
+  dismiss_previous_reviews
+  gh api "${REVIEWS_API}" --method POST --input "${payload_file}" > /dev/null
+}
+
 log_summary() {
   local status="$1"
   if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
@@ -66,8 +100,19 @@ log_summary() {
 }
 
 # 3. Trivial changes: skip the model call entirely, just log it.
+# Still post a review, otherwise a required-approval rule leaves the PR
+# stuck with no signal at all.
 if [ "${TIER}" = "trivial" ]; then
-  log_summary "skipped (trivial tier)"
+  TRIVIAL_EVENT="COMMENT"
+  [ "${BOT_CAN_APPROVE}" = "true" ] && TRIVIAL_EVENT="APPROVE"
+  TRIVIAL_PAYLOAD="$(mktemp)"
+  jq -n --arg sha "${HEAD_SHA}" --arg ev "${TRIVIAL_EVENT}" --arg reason "${REASON}" \
+    '{commit_id: $sha, event: $ev,
+      body: ("### Summary\nTrivial change (" + $reason + ") -- AI review skipped by tiering.")}' \
+    > "${TRIVIAL_PAYLOAD}"
+  post_review "${TRIVIAL_PAYLOAD}"
+  REVIEW_SUMMARY_EXTRA="event=${TRIVIAL_EVENT}"
+  log_summary "skipped model (trivial tier), review posted"
   exit 0
 fi
 
@@ -101,15 +146,14 @@ REVIEW_OUTPUT="$(opencode run "$(cat "${PROMPT_FILE}")")"
 # anchored to real diff lines + an event that can actually gate the merge),
 # not a plain issue comment that GitHub has no way to act on.
 PAYLOAD_FILE="$(mktemp)"
+APPROVE_FLAG=""
+[ "${BOT_CAN_APPROVE}" = "true" ] || APPROVE_FLAG="--no-approve"
 POST_REVIEW_STDERR="$(mktemp)"
 echo "${REVIEW_OUTPUT}" \
-  | python3 "${REVIEWER_HOME}/scripts/post-review.py" --diff "${DIFF_FILE}" --commit "${HEAD_SHA}" \
+  | python3 "${REVIEWER_HOME}/scripts/post-review.py" --diff "${DIFF_FILE}" --commit "${HEAD_SHA}" ${APPROVE_FLAG} \
   > "${PAYLOAD_FILE}" 2> "${POST_REVIEW_STDERR}"
 REVIEW_SUMMARY_EXTRA="$(cat "${POST_REVIEW_STDERR}")"
 
-gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/reviews" \
-  --method POST \
-  --input "${PAYLOAD_FILE}" \
-  > /dev/null
+post_review "${PAYLOAD_FILE}"
 
 log_summary "posted"
