@@ -2,6 +2,20 @@ name: AI Review
 
 on:
   workflow_call:
+    inputs:
+      reviewer_ref:
+        description: >
+          Ref of ai-code-reviewer whose scripts/prompt to run. Set this to the
+          same tag you put after @ in `uses:` (e.g. v1) so the workflow file
+          and the scripts can't drift apart.
+        type: string
+        required: false
+        default: main
+      model_timeout:
+        description: Seconds before the model call is abandoned.
+        type: number
+        required: false
+        default: 600
     secrets:
       LLM_API_KEY:
         required: true
@@ -9,6 +23,7 @@ on:
 jobs:
   review:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
       pull-requests: write
@@ -23,7 +38,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: radeshgovind-2005/ai-code-reviewer
-          ref: main
+          ref: ${{ inputs.reviewer_ref }}
           path: reviewer
 
       - name: Install OpenCode
@@ -38,6 +53,7 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           REVIEWER_HOME: ${{ github.workspace }}/reviewer
+          MODEL_TIMEOUT: ${{ inputs.model_timeout }}
         run: |
           chmod +x "$REVIEWER_HOME/scripts/run-review.sh"
           "$REVIEWER_HOME/scripts/run-review.sh"
