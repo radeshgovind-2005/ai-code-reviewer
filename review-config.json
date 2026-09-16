@@ -4,7 +4,8 @@
     "auth/",
     "payments/",
     "secrets/",
-    ".github/workflows/"
+    ".github/workflows/",
+    "review-config.json"
   ],
   "thresholds": {
     "trivial": { "max_lines": 10, "max_files": 2 },

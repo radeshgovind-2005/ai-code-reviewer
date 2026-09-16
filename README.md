@@ -34,7 +34,9 @@ on:
 
 jobs:
   review:
-    uses: radeshgovind-2005/ai-code-reviewer/.github/workflows/review.yml@main
+    uses: radeshgovind-2005/ai-code-reviewer/.github/workflows/review.yml@v1
+    with:
+      reviewer_ref: v1   # keep in sync with the @ref above
     secrets:
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
 ```
@@ -94,10 +96,20 @@ The model must answer with a JSON object (schema in `agents/reviewer.md`). The b
 | Warnings/suggestions, malformed findings, legacy markdown output, or output it can't parse | `COMMENT` |
 | Valid JSON, no findings, verdict `approve` | `APPROVE` |
 | Trivial tier (model skipped) | `APPROVE` |
+| PR touches a sensitive path | never `APPROVE` (clean → `COMMENT`) |
+| Model error / timeout / empty output, parser crash, any script error | `COMMENT` saying the review didn't complete + job fails |
 
 Before each post, the bot dismisses its own earlier `APPROVED` / `CHANGES_REQUESTED` reviews so a stale verdict never stays in place.
 
 If your branch protection counts `github-actions` approvals, the bot's approval is enough to merge. To always require a human, set `"bot_can_approve": false` in `review-config.json` (then `APPROVE` becomes `COMMENT`).
+
+## Security model
+
+- **Fails closed.** If anything breaks after the PR is identified, the bot posts a "review did not complete" comment, dismisses its old approval, and the job goes red. A broken run never looks like a pass.
+- **Config comes from the base branch.** `review-config.json` is read from the PR's base commit, so a PR can't empty `sensitive_paths` or raise thresholds to approve itself. Changes to `review-config.json` are themselves a sensitive path.
+- **Sensitive paths need a human.** The bot never approves them.
+- **The diff is treated as data.** It's wrapped in markers with a random id the author can't predict, and the prompt tells the model to ignore (and flag) instructions inside it. This reduces prompt injection; it doesn't eliminate it -- which is why approval is also gated by the rules above.
+- **Pin a version.** Use `@v1` + `reviewer_ref: v1` rather than `@main` so changes here don't silently change your gate.
 
 ## Limitations
 
