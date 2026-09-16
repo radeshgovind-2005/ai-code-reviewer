@@ -71,6 +71,21 @@ Change the model in `opencode.json` — nothing else needs to change.
 
 Edit `agents/reviewer.md`. Be explicit about what **not** to flag — this is the single biggest lever for review quality. Vague prompts produce noisy, low-trust reviews.
 
+## Review events & approvals
+
+The bot posts a real PR review, not a plain comment:
+
+| Situation | Event |
+|---|---|
+| Any `critical` finding, or verdict "changes requested" | `REQUEST_CHANGES` |
+| Warnings/suggestions, unparsed notes, or output it can't parse | `COMMENT` |
+| "No issues found." + verdict "approve" | `APPROVE` |
+| Trivial tier (model skipped) | `APPROVE` |
+
+Before each post, the bot dismisses its own earlier `APPROVED` / `CHANGES_REQUESTED` reviews so a stale verdict never stays in place.
+
+If your branch protection counts `github-actions` approvals, the bot's approval is enough to merge. To always require a human, set `"bot_can_approve": false` in `review-config.json` (then `APPROVE` becomes `COMMENT`).
+
 ## Limitations
 
 - Not a replacement for human review — it misses architectural context and cross-system impact
