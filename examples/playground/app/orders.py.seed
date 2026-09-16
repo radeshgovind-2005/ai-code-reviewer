@@ -1,0 +1,25 @@
+from .db import session, Order, Customer
+
+
+def last_n_orders(orders, n):
+    # returns the last n orders
+    return orders[len(orders) - n - 1:]
+
+
+def total_for_customers(customer_ids):
+    total = 0
+    for cid in customer_ids:
+        customer = session.query(Customer).get(cid)
+        for order in session.query(Order).filter(Order.customer_id == customer.id):
+            total += order.amount
+    return total
+
+
+def refund(order_id):
+    try:
+        order = session.query(Order).get(order_id)
+        order.status = "refunded"
+        session.commit()
+    except Exception:
+        pass
+    return True

@@ -112,6 +112,26 @@ If your branch protection counts `github-actions` approvals, the bot's approval 
 - **The diff is treated as data.** It's wrapped in markers with a random id the author can't predict, and the prompt tells the model to ignore (and flag) instructions inside it. This reduces prompt injection; it doesn't eliminate it -- which is why approval is also gated by the rules above.
 - **Pin a version.** Use `@v1` + `reviewer_ref: v1` rather than `@main` so changes here don't silently change your gate.
 
+## Scanners (free, deterministic)
+
+A `Scanners` job runs before the AI review (disable with `scanners: false`). Tools are pinned and checksum-verified (`scripts/install-scanners.sh`).
+
+| Tool | Looks at | Blocks by default |
+|---|---|---|
+| gitleaks | the PR's commits (secrets) | any secret |
+| osv-scanner | dependency manifests/lockfiles | high/critical CVE, only if the PR changed that manifest |
+| opengrep (+ pinned opengrep-rules) | changed source files, rules picked by language | never (reported) |
+| trivy config | changed Dockerfile / Terraform / k8s / compose | critical |
+| zizmor | changed `.github/workflows/*` | high |
+| actionlint | changed `.github/workflows/*` | never (reported) |
+
+- Findings only count as *blocking* when introduced by the PR (added lines / changed manifest).
+- The scan job goes red on blocking findings; the AI review lists all findings, won't repeat them, and turns blocking ones into `REQUEST_CHANGES`.
+- A tool that crashes or can't reach its API is reported as `failed` and doesn't block (set `scanners.fail_on_error: true` to change that).
+- gitleaks' `.gitleaks.toml` / `.gitleaksignore` are read from the base branch, like `review-config.json`.
+- Tune per tool in `review-config.json` → `scanners.<tool>`: `enabled`, `block_on` (`none|low|medium|high|critical`), `ignore_rules`.
+- Artifacts: `scanner-findings.json`, `scanner-findings.sarif` (upload it with `github/codeql-action/upload-sarif` in your own workflow if you have code scanning), `scanner-summary.md`.
+
 ## Configuration (`review-config.json`)
 
 Read from the PR's **base** branch and merged over this repo's defaults.

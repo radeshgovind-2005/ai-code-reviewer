@@ -1,0 +1,5 @@
+FROM python:latest
+ADD . /app
+WORKDIR /app
+RUN pip install -r requirements.txt
+CMD ["flask", "--app", "app.handler", "run", "--host", "0.0.0.0"]

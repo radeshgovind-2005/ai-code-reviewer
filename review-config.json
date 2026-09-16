@@ -11,7 +11,41 @@
     "*.key"
   ],
   "thresholds": {
-    "trivial": { "max_lines": 10, "max_files": 2 },
-    "lite": { "max_lines": 100, "max_files": 10 }
+    "trivial": {
+      "max_lines": 10,
+      "max_files": 2
+    },
+    "lite": {
+      "max_lines": 100,
+      "max_files": 10
+    }
+  },
+  "scanners": {
+    "fail_on_error": false,
+    "gitleaks": {
+      "enabled": true,
+      "block_on": "low"
+    },
+    "osv": {
+      "enabled": true,
+      "block_on": "high"
+    },
+    "opengrep": {
+      "enabled": true,
+      "block_on": "none"
+    },
+    "trivy": {
+      "enabled": true,
+      "block_on": "critical"
+    },
+    "zizmor": {
+      "enabled": true,
+      "block_on": "high",
+      "ignore_rules": []
+    },
+    "actionlint": {
+      "enabled": true,
+      "block_on": "none"
+    }
   }
 }

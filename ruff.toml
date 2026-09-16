@@ -1,0 +1,14 @@
+line-length = 130
+target-version = "py310"
+
+[lint]
+select = ["E", "F", "W", "B", "S"]
+ignore = [
+  "E741",  # short names like `l` in comprehensions are fine
+  "S603", "S607",  # subprocess calls are the point of these scripts/tests
+  "S101",  # asserts in tests
+  "S108",  # temp paths in tests
+]
+
+[lint.per-file-ignores]
+"tests/**" = ["S"]

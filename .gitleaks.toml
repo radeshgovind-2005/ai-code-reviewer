@@ -1,0 +1,12 @@
+# This repository deliberately contains fake secrets in the playground and
+# scanner fixtures. Consumer repos get gitleaks' default rules unless they add
+# their own .gitleaks.toml (read from the PR's base branch).
+[extend]
+useDefault = true
+
+[allowlist]
+description = "seeded test data"
+paths = [
+  '''^examples/playground/''',
+  '''^tests/fixtures/''',
+]
