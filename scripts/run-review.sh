@@ -12,6 +12,9 @@ set -Eeuo pipefail
 # Optional:
 #   MODEL_TIMEOUT     - seconds before the model call is abandoned (default 600)
 #   BOT_LOGIN         - login whose old reviews get dismissed (default github-actions[bot])
+#   AI_REVIEW_MARKER  - file touched once this script has posted a review (or a
+#                       failure review), so the workflow's if: failure() step
+#                       doesn't post a second one
 #
 # Fail closed: once we know which PR we're on, ANY failure (model error,
 # empty output, parser crash, unexpected shell error) posts a COMMENT review
@@ -96,6 +99,10 @@ post_review() {
   return 1
 }
 
+mark_reported() {
+  if [ -n "${AI_REVIEW_MARKER:-}" ]; then touch "${AI_REVIEW_MARKER}"; fi
+}
+
 # --------------------------------------------------------------------------
 # Fail closed
 # --------------------------------------------------------------------------
@@ -112,7 +119,11 @@ fail_review() {
       body: ("### ⚠️ AI review did not complete\n\n" + $reason
              + "\n\nThis PR has **not** been reviewed by the AI reviewer. See the [workflow run](" + $run + ") for details, then re-run the job.")}' \
     > "${payload}"
-  post_review "${payload}" || echo "error: could not post the failure review either" >&2
+  if post_review "${payload}"; then
+    mark_reported
+  else
+    echo "error: could not post the failure review either" >&2
+  fi
   REVIEW_SUMMARY_EXTRA="event=COMMENT (failure)"
   log_summary "failed: ${reason}"
   exit 1
@@ -139,17 +150,12 @@ BOT_CAN_APPROVE="$(jq -r 'if .bot_can_approve == false then "false" else "true" 
 # 2. Diff, filtering out noise.
 # --------------------------------------------------------------------------
 DIFF_FILE="${WORK_DIR}/pr.diff"
-git diff "${BASE_SHA}...${HEAD_SHA}" \
-  -- . \
-  ':(exclude)*.lock' \
-  ':(exclude)package-lock.json' \
-  ':(exclude)yarn.lock' \
-  ':(exclude)pnpm-lock.yaml' \
-  ':(exclude)*.min.js' \
-  ':(exclude)*.min.css' \
-  ':(exclude)dist/**' \
-  ':(exclude)vendor/**' \
-  > "${DIFF_FILE}"
+EXCLUDES=()
+while IFS= read -r p; do
+  [[ -z "$p" || "$p" == \#* ]] && continue
+  EXCLUDES+=("$p")
+done < "${REVIEWER_HOME}/scripts/diff-excludes.txt"
+git diff "${BASE_SHA}...${HEAD_SHA}" -- . "${EXCLUDES[@]}" > "${DIFF_FILE}"
 
 if [ ! -s "${DIFF_FILE}" ]; then
   echo "No reviewable changes after filtering. Skipping."
@@ -171,37 +177,45 @@ if [ "${BOT_CAN_APPROVE}" != "true" ] || [ "${SENSITIVE}" = "true" ]; then
   APPROVE_FLAG="--no-approve"
 fi
 
-# Trivial: skip the model, but still post a review so required-approval rules
-# don't leave the PR stuck with no signal.
-if [ "${TIER}" = "trivial" ]; then
-  TRIVIAL_EVENT="APPROVE"
-  [ -n "${APPROVE_FLAG}" ] && TRIVIAL_EVENT="COMMENT"
-  jq -n --arg sha "${HEAD_SHA}" --arg ev "${TRIVIAL_EVENT}" --arg reason "${REASON}" \
-    '{commit_id: $sha, event: $ev,
-      body: ("### Summary\nTrivial change (" + $reason + ") -- AI review skipped by tiering.")}' \
-    > "${WORK_DIR}/payload.json"
-  post_review "${WORK_DIR}/payload.json" || fail_review "GitHub rejected the review for a trivial PR."
-  REVIEW_SUMMARY_EXTRA="event=${TRIVIAL_EVENT}"
-  log_summary "skipped model (trivial tier), review posted"
-  exit 0
-fi
-
 # --------------------------------------------------------------------------
 # 4. Prompt: instructions + tier note + line-numbered diff inside random
 #    nonce markers. The author can't predict the nonce, so they can't close
 #    the block early and smuggle text that looks like it's outside the diff.
 # --------------------------------------------------------------------------
+# Cap the diff so huge PRs still get a (partial, never-approving) review
+# instead of blowing the model's context window.
+MAX_DIFF_BYTES="$(jq -r '.max_diff_bytes // 400000' "${CONFIG_FILE}")"
+OMITTED_FILE="${WORK_DIR}/omitted.txt"
+REVIEW_DIFF_FILE="${WORK_DIR}/review.diff"
+python3 "${REVIEWER_HOME}/scripts/cap-diff.py" --max-bytes "${MAX_DIFF_BYTES}" \
+  --omitted "${OMITTED_FILE}" < "${DIFF_FILE}" > "${REVIEW_DIFF_FILE}"
+TRUNCATED=false
+if [ -s "${OMITTED_FILE}" ]; then
+  TRUNCATED=true
+  APPROVE_FLAG="--no-approve"
+fi
+
 ANNOTATED_DIFF_FILE="${WORK_DIR}/annotated.diff"
-python3 "${REVIEWER_HOME}/scripts/annotate-diff.py" < "${DIFF_FILE}" > "${ANNOTATED_DIFF_FILE}"
+python3 "${REVIEWER_HOME}/scripts/annotate-diff.py" < "${REVIEW_DIFF_FILE}" > "${ANNOTATED_DIFF_FILE}"
 
 NONCE="$(python3 -c 'import secrets; print(secrets.token_hex(12))')"
 PROMPT_FILE="${WORK_DIR}/prompt.md"
 {
   cat "${REVIEWER_HOME}/agents/reviewer.md"
   echo ""
-  if [ "${TIER}" = "lite" ]; then
+  if [ "${TIER}" = "trivial" ]; then
+    echo "## Tier note"
+    echo "This PR was classified as **trivial** tier (${REASON}). Be brief: flag only concrete bugs or security issues; don't comment on style."
+    echo ""
+  elif [ "${TIER}" = "lite" ]; then
     echo "## Tier note"
     echo "This PR was classified as **lite** tier (${REASON}). Keep the review brief -- focus only on the highest-severity findings."
+    echo ""
+  fi
+  if [ "${TRUNCATED}" = true ]; then
+    echo "## Truncation note"
+    echo "The diff was too large and has been cut. These files are NOT shown and must not be assumed safe:"
+    sed 's/^/- /' "${OMITTED_FILE}"
     echo ""
   fi
   echo "## Diff to review"
@@ -216,12 +230,15 @@ PROMPT_FILE="${WORK_DIR}/prompt.md"
 } > "${PROMPT_FILE}"
 
 # --------------------------------------------------------------------------
-# 5. Model call. Pass the whole prompt as one positional argument --
-#    combining -f with a trailing string made OpenCode misparse it.
+# 5. Model call. The prompt goes in on stdin (opencode run appends piped
+#    stdin to the message). Passing it as an argument hit Linux's ~128 KB
+#    per-argument limit on large diffs ("Argument list too long").
 # --------------------------------------------------------------------------
 MODEL_OUTPUT_FILE="${WORK_DIR}/model-output.txt"
 MODEL_EXIT=0
-timeout "${MODEL_TIMEOUT}" opencode run "$(cat "${PROMPT_FILE}")" > "${MODEL_OUTPUT_FILE}" \
+timeout "${MODEL_TIMEOUT}" opencode run \
+    "Review the pull request below, following all instructions in it." \
+    < "${PROMPT_FILE}" > "${MODEL_OUTPUT_FILE}" \
   || MODEL_EXIT=$?
 if [ "${MODEL_EXIT}" -eq 124 ]; then
   fail_review "The model call timed out after ${MODEL_TIMEOUT}s."
@@ -238,11 +255,20 @@ PAYLOAD_FILE="${WORK_DIR}/payload.json"
 STATS_FILE="${WORK_DIR}/stats.txt"
 # shellcheck disable=SC2086  # APPROVE_FLAG is intentionally empty or one flag
 python3 "${REVIEWER_HOME}/scripts/post-review.py" \
-    --diff "${DIFF_FILE}" --commit "${HEAD_SHA}" ${APPROVE_FLAG} \
+    --diff "${REVIEW_DIFF_FILE}" --commit "${HEAD_SHA}" ${APPROVE_FLAG} \
     < "${MODEL_OUTPUT_FILE}" > "${PAYLOAD_FILE}" 2> "${STATS_FILE}" \
   || fail_review "post-review.py crashed while parsing the model output: $(tail -n 1 "${STATS_FILE}")"
 REVIEW_SUMMARY_EXTRA="$(tail -n 1 "${STATS_FILE}")"
 
+if [ "${TRUNCATED}" = true ]; then
+  jq --rawfile omitted "${OMITTED_FILE}" \
+    '.body += "\n\n> [!WARNING]\n> **Partial review:** the diff exceeded the size cap, so these files were not reviewed:\n"
+       + ([$omitted | split("\n")[] | select(length > 0) | "> - `" + . + "`"] | join("\n"))' \
+    "${PAYLOAD_FILE}" > "${PAYLOAD_FILE}.tmp" && mv "${PAYLOAD_FILE}.tmp" "${PAYLOAD_FILE}"
+  REVIEW_SUMMARY_EXTRA="${REVIEW_SUMMARY_EXTRA} truncated=true"
+fi
+
 post_review "${PAYLOAD_FILE}" || fail_review "GitHub rejected the review payload."
+mark_reported
 
 log_summary "posted"

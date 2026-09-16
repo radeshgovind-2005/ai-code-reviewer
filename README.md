@@ -95,7 +95,8 @@ The model must answer with a JSON object (schema in `agents/reviewer.md`). The b
 | Any `critical` finding, or verdict "changes requested" | `REQUEST_CHANGES` |
 | Warnings/suggestions, malformed findings, legacy markdown output, or output it can't parse | `COMMENT` |
 | Valid JSON, no findings, verdict `approve` | `APPROVE` |
-| Trivial tier (model skipped) | `APPROVE` |
+| Trivial tier | model still runs with a brief prompt; same rules as above |
+| Diff larger than `max_diff_bytes` (partial review) | never `APPROVE` (clean → `COMMENT`), skipped files listed |
 | PR touches a sensitive path | never `APPROVE` (clean → `COMMENT`) |
 | Model error / timeout / empty output, parser crash, any script error | `COMMENT` saying the review didn't complete + job fails |
 
@@ -105,11 +106,30 @@ If your branch protection counts `github-actions` approvals, the bot's approval 
 
 ## Security model
 
-- **Fails closed.** If anything breaks after the PR is identified, the bot posts a "review did not complete" comment, dismisses its old approval, and the job goes red. A broken run never looks like a pass.
+- **Fails closed.** If anything breaks -- including setup steps before the script runs -- the bot posts a "review did not complete" comment, dismisses its old approval, and the job goes red. A broken run never looks like a pass.
 - **Config comes from the base branch.** `review-config.json` is read from the PR's base commit, so a PR can't empty `sensitive_paths` or raise thresholds to approve itself. Changes to `review-config.json` are themselves a sensitive path.
 - **Sensitive paths need a human.** The bot never approves them.
 - **The diff is treated as data.** It's wrapped in markers with a random id the author can't predict, and the prompt tells the model to ignore (and flag) instructions inside it. This reduces prompt injection; it doesn't eliminate it -- which is why approval is also gated by the rules above.
 - **Pin a version.** Use `@v1` + `reviewer_ref: v1` rather than `@main` so changes here don't silently change your gate.
+
+## Configuration (`review-config.json`)
+
+Read from the PR's **base** branch and merged over this repo's defaults.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `bot_can_approve` | `true` | `false` → the bot never approves |
+| `max_diff_bytes` | `400000` | Larger diffs are cut at file boundaries; review becomes partial and non-approving |
+| `sensitive_paths` | `auth/`, `payments/`, `secrets/`, `.github/workflows/`, `review-config.json`, `*.pem`, `*.key` | Never auto-approved, always full tier |
+| `thresholds.trivial` / `thresholds.lite` | 10 lines / 2 files · 100 lines / 10 files | Tier limits; lockfiles, `dist/`, `vendor/`, minified files and source maps don't count |
+
+Sensitive path patterns:
+
+- `auth/` — a directory named `auth` at any depth (`auth/x`, `src/auth/x`)
+- `Dockerfile` — a file or directory with that name at any depth
+- `*.pem` — contains `*`, `?` or `[` → shell glob on the full path (`*` also matches `/`)
+
+Workflow inputs: `reviewer_ref` (default `main`), `opencode_version` (pinned, default `1.18.31`), `model_timeout` (seconds, default 600). Runs for the same PR cancel each other when a newer commit is pushed.
 
 ## Limitations
 
