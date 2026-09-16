@@ -1,0 +1,45 @@
+# .github/workflows/pr-review.yml in the repository you want reviewed.
+name: AI PR Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions: {}
+
+jobs:
+  # Optional: produce a coverage report so the tests reviewer sees changed-line
+  # coverage. Remove this job and `coverage_artifact` if you don't need it.
+  tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - run: |
+          pip install -r requirements.txt pytest pytest-cov
+          pytest --cov --cov-report=xml
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage
+          path: coverage.xml
+
+  review:
+    needs: tests
+    if: ${{ !cancelled() && !github.event.pull_request.draft }}
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: radeshgovind-2005/ai-code-reviewer/.github/workflows/review.yml@v2
+    with:
+      reviewer_ref: v2            # keep in sync with the @ref above
+      coverage_artifact: coverage # optional
+      coverage_path: coverage.xml
+      # scanners: false           # turn the Scanners job off
+    secrets:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}   # omit to run on the free-tier model (never approves)

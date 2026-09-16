@@ -1,162 +1,185 @@
 # ai-code-reviewer
 
-AI-powered code review for pull requests, built on [OpenCode](https://opencode.ai/). Drop-in reusable GitHub workflow — plug it into any repo and every PR gets an automatic review comment.
+Automated pull-request review for any GitHub repo: **free deterministic scanners** plus **specialist AI reviewers** (security, correctness, performance, tests, docs, your own engineering standards) and a **coordinator** that merges, verifies and decides. Built on [OpenCode](https://opencode.ai/), shipped as a reusable GitHub workflow. Inspired by Cloudflare's [AI code review](https://blog.cloudflare.com/ai-code-review/) and [standards enforcement](https://blog.cloudflare.com/engineering-standards-enforcement/) posts, scaled down to one workflow.
 
-## What it does
-
-- Runs on every pull request
-- Pulls the diff, sends it to an LLM with a scoped review prompt
-- Posts a single structured comment: what's good, what's risky, what to fix
-- Free and open — bring your own model or point it at a free-tier one
-
-## Why
-
-Human review is great but slow. This catches the obvious stuff (bugs, missing error handling, style drift, security smells) automatically, so human reviewers can focus on the things that actually need judgment.
+```
+PR ──► Scanners job ─ gitleaks · osv-scanner · opengrep · trivy · zizmor · actionlint ─► findings.json ─┐
+  └──► AI Review job                                                                                    │
+         config (base branch) → diff → tier → context (AGENTS.md, PR text, standards, coverage, ◄───────┘
+                                                        previous threads, scanner findings)
+           → reviewers in parallel, each with its own model ─► coordinator ─► one GitHub PR review
+           → any failure: "review did not complete" + red job (fail closed)
+```
 
 ## Quickstart
 
-**1. Get an API key** (or use a free-tier model — see [Model options](#model-options))
+1. **Add the secret** in the repo you want reviewed: *Settings → Secrets and variables → Actions → `LLM_API_KEY`* (an Anthropic key for the default config; see [Models](#models--byok)). No key = free-tier model, never approves.
+2. **Add the workflow** — copy [`examples/consumer/pr-review.yml`](examples/consumer/pr-review.yml) to `.github/workflows/pr-review.yml`. Minimal version:
 
-**2. In this repo**, set your key as a secret:
-```
-Settings → Secrets and variables → Actions → New repository secret
-Name: LLM_API_KEY
-```
+   ```yaml
+   name: AI PR Review
+   on:
+     pull_request:
+       types: [opened, synchronize, reopened, ready_for_review]
+   permissions: {}
+   jobs:
+     review:
+       permissions:
+         contents: read
+         pull-requests: write
+       uses: radeshgovind-2005/ai-code-reviewer/.github/workflows/review.yml@v2
+       with:
+         reviewer_ref: v2   # keep in sync with the @ref above
+       secrets:
+         LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+   ```
+3. **Protect the branch** so the review actually gates merges — see [docs/SETUP.md](docs/SETUP.md).
+4. **Try it on a seeded bad PR:** `scripts/make-playground-pr.sh` in a test repo, push, open a PR.
 
-**3. In any repo you want reviewed**, add:
+## What runs
 
-`.github/workflows/pr-review.yml`
-```yaml
-name: AI PR Review
-on:
-  pull_request:
-    types: [opened, synchronize]
-
-jobs:
-  review:
-    uses: radeshgovind-2005/ai-code-reviewer/.github/workflows/review.yml@v1
-    with:
-      reviewer_ref: v1   # keep in sync with the @ref above
-    secrets:
-      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-```
-
-Open a PR — it gets reviewed automatically.
-
-## Repo structure
-
-```
-ai-code-reviewer/
-├── .github/workflows/
-│   ├── review.yml             # the reusable workflow other repos call
-│   └── ci.yml                 # tests for this repo
-├── agents/reviewer.md         # what to flag / not flag + JSON output contract
-├── review-config.json         # tier thresholds, sensitive paths, bot_can_approve
-├── opencode.json              # model + provider config
-├── scripts/
-│   ├── run-review.sh          # orchestrates: diff → tier → prompt → model → post review
-│   ├── tier-pr.sh             # trivial / lite / full from diff stats
-│   ├── annotate-diff.py       # prefixes diff lines with real line numbers
-│   └── post-review.py         # model JSON → GitHub PR review payload
-└── tests/
-    ├── test_post_review.py
-    └── fixtures/              # sample diff + recorded model outputs
-```
-
-## Development
-
-```
-python3 -m unittest discover -s tests -v
-```
-
-Every tricky model output (bad JSON, wrong line numbers, contradicting verdicts, the old markdown format) lives as a file in `tests/fixtures/outputs/` with its expected event in `CASES`. When the reviewer misbehaves on a real PR, save the model output there first, then fix.
-
-## Model options
-
-| Option | Cost | Notes |
-|---|---|---|
-| Anthropic / OpenAI API | Pay per token | Cheap at this scale — usually cents per review |
-| Groq free tier | Free | Fast, generous free limits |
-| Ollama (self-hosted) | Free | Runs locally, no API key needed |
-| Cloudflare Workers AI | Free tier | Good if you're already on Cloudflare |
-
-Change the model in `opencode.json` — nothing else needs to change.
-
-## Customizing what it checks
-
-Edit `agents/reviewer.md`. Be explicit about what **not** to flag — this is the single biggest lever for review quality. Vague prompts produce noisy, low-trust reviews.
-
-## Review events & approvals
-
-The model must answer with a JSON object (schema in `agents/reviewer.md`). The bot turns it into a real PR review, not a plain comment:
-
-| Situation | Event |
-|---|---|
-| Any `critical` finding, or verdict "changes requested" | `REQUEST_CHANGES` |
-| Warnings/suggestions, malformed findings, legacy markdown output, or output it can't parse | `COMMENT` |
-| Valid JSON, no findings, verdict `approve` | `APPROVE` |
-| Trivial tier | model still runs with a brief prompt; same rules as above |
-| Diff larger than `max_diff_bytes` (partial review) | never `APPROVE` (clean → `COMMENT`), skipped files listed |
-| PR touches a sensitive path | never `APPROVE` (clean → `COMMENT`) |
-| Model error / timeout / empty output, parser crash, any script error | `COMMENT` saying the review didn't complete + job fails |
-
-Before each post, the bot dismisses its own earlier `APPROVED` / `CHANGES_REQUESTED` reviews so a stale verdict never stays in place.
-
-If your branch protection counts `github-actions` approvals, the bot's approval is enough to merge. To always require a human, set `"bot_can_approve": false` in `review-config.json` (then `APPROVE` becomes `COMMENT`).
-
-## Security model
-
-- **Fails closed.** If anything breaks -- including setup steps before the script runs -- the bot posts a "review did not complete" comment, dismisses its old approval, and the job goes red. A broken run never looks like a pass.
-- **Config comes from the base branch.** `review-config.json` is read from the PR's base commit, so a PR can't empty `sensitive_paths` or raise thresholds to approve itself. Changes to `review-config.json` are themselves a sensitive path.
-- **Sensitive paths need a human.** The bot never approves them.
-- **The diff is treated as data.** It's wrapped in markers with a random id the author can't predict, and the prompt tells the model to ignore (and flag) instructions inside it. This reduces prompt injection; it doesn't eliminate it -- which is why approval is also gated by the rules above.
-- **Pin a version.** Use `@v1` + `reviewer_ref: v1` rather than `@main` so changes here don't silently change your gate.
-
-## Scanners (free, deterministic)
-
-A `Scanners` job runs before the AI review (disable with `scanners: false`). Tools are pinned and checksum-verified (`scripts/install-scanners.sh`).
+### Scanners (free, deterministic, pinned + checksum-verified)
 
 | Tool | Looks at | Blocks by default |
 |---|---|---|
 | gitleaks | the PR's commits (secrets) | any secret |
-| osv-scanner | dependency manifests/lockfiles | high/critical CVE, only if the PR changed that manifest |
-| opengrep (+ pinned opengrep-rules) | changed source files, rules picked by language | never (reported) |
+| osv-scanner | dependency manifests / lockfiles | high/critical CVE, if the PR changed that manifest |
+| opengrep + pinned opengrep-rules | changed source files, rules by language | never (reported) |
 | trivy config | changed Dockerfile / Terraform / k8s / compose | critical |
 | zizmor | changed `.github/workflows/*` | high |
 | actionlint | changed `.github/workflows/*` | never (reported) |
 
-- Findings only count as *blocking* when introduced by the PR (added lines / changed manifest).
-- The scan job goes red on blocking findings; the AI review lists all findings, won't repeat them, and turns blocking ones into `REQUEST_CHANGES`.
-- A tool that crashes or can't reach its API is reported as `failed` and doesn't block (set `scanners.fail_on_error: true` to change that).
-- gitleaks' `.gitleaks.toml` / `.gitleaksignore` are read from the base branch, like `review-config.json`.
-- Tune per tool in `review-config.json` → `scanners.<tool>`: `enabled`, `block_on` (`none|low|medium|high|critical`), `ignore_rules`.
-- Artifacts: `scanner-findings.json`, `scanner-findings.sarif` (upload it with `github/codeql-action/upload-sarif` in your own workflow if you have code scanning), `scanner-summary.md`.
+Findings block only when **introduced by the PR**. The Scanners job goes red on blocking findings; the AI review lists all of them, won't repeat them, and turns blocking ones into `REQUEST_CHANGES`. A scanner that crashes or can't reach its API is reported as `failed` and doesn't block (`scanners.fail_on_error: true` to change).
 
-## Configuration (`review-config.json`)
+### AI reviewers (model by responsibility)
 
-Read from the PR's **base** branch and merged over this repo's defaults.
+| Reviewer | Owns | Default model | Tiers | Runs when |
+|---|---|---|---|---|
+| security | exploitable issues only | Sonnet 4.6 → 4.5 | trivial, lite, full | always |
+| correctness | bugs, error handling, broken contracts | Sonnet 4.6 → 4.5 | trivial, lite, full | always |
+| performance | measurable regressions | Sonnet 4.6 → 4.5 | full | always |
+| tests | changed behaviour has tests (+ changed-line coverage) | Haiku 4.5 → Sonnet 4.5 | lite, full | always |
+| docs | docs / README / AGENTS.md drift | Haiku 4.5 → Sonnet 4.5 | lite, full | docs-like files changed |
+| standards | your `.review/standards/*.md` | Sonnet 4.6 → 4.5 | lite, full | a standard matches a changed path |
+| **coordinator** | dedupe, verify against code, calibrate, verdict, resolve fixed threads | Opus 4.7 → Sonnet | lite, full | — (trivial: deterministic merge) |
+
+**Tier decides which reviewers run; each reviewer has its own model.** Tiers come from diff size (lockfiles/generated files don't count) and sensitive paths:
+trivial ≤ 10 lines & ≤ 2 files · lite ≤ 100 lines & ≤ 10 files · full otherwise or any sensitive path.
+
+Reviewers are read-only OpenCode agents (read/grep/glob the checkout; no shell, no edits, no network tools), run in parallel with retries on 429/5xx, fallback models, a heartbeat, an inactivity kill and an overall deadline.
+
+### Review events
+
+| Situation | Event |
+|---|---|
+| Any `critical` finding, `changes_requested`, or a blocking scanner finding | `REQUEST_CHANGES` |
+| Warnings/suggestions, malformed/unparseable output | `COMMENT` |
+| All clean | `APPROVE` |
+| Sensitive path · partial (truncated) diff · a reviewer or the coordinator failed · free tier · `bot_can_approve: false` | never `APPROVE` (says why) |
+| Nothing could be reviewed (all reviewers failed, crash, setup failure) | `COMMENT` "did not complete" + job fails |
+
+On new pushes the bot dismisses its old approval / change request, shows the coordinator its previous threads (with replies), **resolves threads that were fixed**, and doesn't repost findings that are still open.
+
+Every review ends with a footer like `4 reviewer(s): security, correctness, tests, docs + coordinator · 1m42s · 58.3k tokens · $0.21`; the job summary has per-reviewer model, attempts, time, tokens and cost, and the `ai-review` artifact has the exact prompts.
+
+## Configuration
+
+`review-config.json` in your repo, read from the **base branch** and deep-merged over [the defaults](review-config.json):
 
 | Key | Default | Meaning |
 |---|---|---|
-| `bot_can_approve` | `true` | `false` → the bot never approves |
-| `max_diff_bytes` | `400000` | Larger diffs are cut at file boundaries; review becomes partial and non-approving |
-| `sensitive_paths` | `auth/`, `payments/`, `secrets/`, `.github/workflows/`, `review-config.json`, `*.pem`, `*.key` | Never auto-approved, always full tier |
-| `thresholds.trivial` / `thresholds.lite` | 10 lines / 2 files · 100 lines / 10 files | Tier limits; lockfiles, `dist/`, `vendor/`, minified files and source maps don't count |
+| `bot_can_approve` | `true` | `false` → never approves |
+| `max_diff_bytes` | `400000` | larger diffs are cut per file → partial, non-approving review |
+| `diff_excludes` | `[]` | extra globs to ignore (e.g. `"generated/**"`); migrations are never excluded |
+| `sensitive_paths` | `auth/`, `payments/`, `secrets/`, `.github/workflows/`, `review-config.json`, `*.pem`, `*.key` | never auto-approved, always full tier |
+| `thresholds.trivial` / `.lite` | 10/2 · 100/10 | lines / files |
+| `agents.<name>` | see table | `model`, `fallback[]`, `tiers[]`, `paths[]`, `enabled`, `timeout` |
+| `coordinator` | Opus 4.7 | `model`, `fallback[]`, `tiers[]`, `enabled` |
+| `review` | | `max_parallel`, `timeout`, `overall_timeout`, `inactivity_timeout`, `retries`, `resolve_fixed_threads`, `free_tier_model` |
+| `scanners.<tool>` | see table | `enabled`, `block_on` (`none\|low\|medium\|high\|critical`), `ignore_rules[]`; `fail_on_error` |
 
-Sensitive path patterns:
+Path patterns (sensitive paths, agent `paths`, standards): `auth/` = that directory at any depth · `Dockerfile` = that name at any depth · `*.pem` / `**/x` = glob on the full path.
 
-- `auth/` — a directory named `auth` at any depth (`auth/x`, `src/auth/x`)
-- `Dockerfile` — a file or directory with that name at any depth
-- `*.pem` — contains `*`, `?` or `[` → shell glob on the full path (`*` also matches `/`)
+Workflow inputs: `reviewer_ref`, `opencode_version` (pinned), `model_timeout`, `scanners` (bool), `coverage_artifact` + `coverage_path`.
 
-Workflow inputs: `reviewer_ref` (default `main`), `opencode_version` (pinned, default `1.18.31`), `model_timeout` (seconds, default 600). Runs for the same PR cancel each other when a newer commit is pushed.
+### Repository context the reviewers get
+
+- **`AGENTS.md`** (or `.review/instructions.md`) from the base branch — conventions a diff can't show. [Example](examples/consumer/AGENTS.md).
+- **Engineering standards** in `.review/standards/*.md` from the base branch ([examples](examples/consumer/.review/standards)):
+  ```markdown
+  ---
+  id: no-swallowed-exceptions
+  level: MUST          # MUST | SHOULD
+  status: enforced     # approved = reported only, enforced = MUST blocks
+  paths: ["*.py"]
+  ---
+  Catching an exception must handle it, re-raise it, or log it with context.
+  ```
+  Only standards matching changed files are sent. `MUST`+`enforced` findings become critical; everything else is capped at warning — enforced in code, not left to the model.
+- **PR title/description**, **scanner findings**, **previous threads** — as untrusted, nonce-wrapped data.
+- **Changed-line coverage** — pass a coverage artifact; diff-cover gives the tests reviewer the uncovered changed lines.
+
+## Models / BYOK
+
+Models are OpenCode `provider/model` ids. `LLM_API_KEY` is exported as the key variable of every provider your config uses (`anthropic` → `ANTHROPIC_API_KEY`, `openai`, `openrouter`, `groq`, `google`, `deepseek`, `xai`, `mistral`). To mix providers, pass provider-specific secrets as env instead. With no key at all, every reviewer uses `review.free_tier_model` and the bot never approves.
+
+## Security model
+
+- **Fails closed** — a broken run never looks like a pass.
+- **Rules come from the base branch** — `review-config.json`, `.review/standards`, `AGENTS.md`, `.gitleaks.toml`/`.gitleaksignore`. A PR can't loosen what it's judged by.
+- **The PR can't configure the reviewer.** OpenCode runs with project config, plugins, `AGENTS.md`/`CLAUDE.md` auto-loading disabled, a read-only agent, and an environment without GitHub tokens. (Before v2 a PR could ship an OpenCode plugin and run code with your keys — pin `@v2`.)
+- **Untrusted text is data** — diff, PR description, scanner paths, thread replies are wrapped in markers with a random id and the prompt says never to follow instructions inside.
+- **Pinned everything** — actions by SHA, scanners by version + sha256, OpenCode by npm version, reviewer by tag.
+
+## Local use
+
+```bash
+scripts/review-local.sh --base main          # AI review of committed + uncommitted changes, printed
+scripts/review-local.sh --scan               # + scanners (install: scripts/install-scanners.sh)
+python3 evals/run.py --only sql-injection    # score the reviewers on seeded PRs (needs a key)
+pre-commit install                           # examples/consumer/pre-commit-config.yaml: fast checks before push
+```
+
+## Quality: evals
+
+`evals/cases/*.json` are seeded PRs with expected findings (must-find, false-positive budget, allowed verdicts). `python3 evals/run.py` runs the real pipeline and reports recall, false positives per case, verdict accuracy, p50/p95 time and cost. Run it before changing prompts, models or tiers and compare with the baseline in the roadmap. When the reviewer misses something on a real PR, add a case.
+
+## Repo layout
+
+```
+.github/workflows/review.yml   reusable workflow (Scanners + AI Review jobs)
+.github/workflows/ci.yml       tests, lint, real-scanner and real-OpenCode integration tests
+.github/workflows/self-review.yml   this repo's PRs reviewed by their own code
+agents/                        _shared.md + one prompt per reviewer + coordinator.md
+opencode.json                  read-only `ai-reviewer` agent
+review-config.json             defaults (tiers, agents/models, scanners, limits)
+scripts/run-review.sh          AI Review job: config → diff → tier → review.py → post
+scripts/review.py, reviewer/   orchestrator: selection, prompts, OpenCode runner, coordinator, standards
+scripts/post-review.py         final JSON → GitHub review payload
+scripts/run-scanners.sh        Scanners job; normalize-scanners.py → findings/markdown/SARIF
+scripts/install-scanners.sh    pinned + checksummed scanner install
+scripts/review-local.sh        local dry run
+scripts/make-playground-pr.sh  seeded bad PR for demos
+evals/                         eval cases + harness
+examples/                      consumer workflow, standards, AGENTS.md, pre-commit, playground
+tests/                         unit + end-to-end tests (fake gh/opencode/scanners)
+```
+
+## Development
+
+```bash
+python3 -m unittest discover -s tests            # ~100 tests, no network
+SCANNERS_INTEGRATION=1 python3 -m unittest tests.test_scanners_integration   # real scanners
+OPENCODE_INTEGRATION=1 python3 -m unittest tests.test_opencode_integration   # real opencode + mock model
+shellcheck -S warning scripts/*.sh && ruff check scripts tests evals
+```
 
 ## Limitations
 
-- Not a replacement for human review — it misses architectural context and cross-system impact
-- Best on small-to-medium diffs; huge refactors get expensive and less accurate
-- Only as good as the prompt in `agents/reviewer.md` — tune it for your codebase
+- Not a replacement for human review: limited architectural and cross-service awareness, weak on subtle concurrency.
+- Cost grows with diff size and tier; very large PRs get partial reviews.
+- Model ids in the defaults must exist for your provider — check the job summary's per-reviewer status after your first run and override in `review-config.json` if needed.
 
 ## License
 
-MIT — free to use, fork, and modify.
+MIT

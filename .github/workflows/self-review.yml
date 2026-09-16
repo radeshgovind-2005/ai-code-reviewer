@@ -1,0 +1,23 @@
+name: Self review
+
+# Dogfooding: this repository's own PRs are reviewed by the reviewer code in
+# the PR itself (reviewer_ref = PR head), so changes are exercised for real
+# before they're tagged. Fork PRs get no secrets -> free-tier model, and a
+# read-only token -> the review can't be posted (job fails, that's expected).
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions: {}
+
+jobs:
+  review:
+    if: ${{ !github.event.pull_request.draft }}
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: ./.github/workflows/review.yml
+    with:
+      reviewer_ref: ${{ github.event.pull_request.head.sha }}
+    secrets:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
