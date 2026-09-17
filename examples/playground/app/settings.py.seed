@@ -1,0 +1,5 @@
+import os
+
+SERVICE_API_KEY = "a8Fq9ZkP2mXr7Lb8Tn3Wc6Vy1Hd5Js0AgQeR4tYu"
+DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://admin:S3cr3tPassw0rd!@db.internal:5432/orders")
+DEBUG = True

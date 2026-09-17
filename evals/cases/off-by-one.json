@@ -1,0 +1,26 @@
+{
+  "description": "Slice returns n+1 items.",
+  "before": {
+    "app/orders.py": "def first(orders):\n    return orders[0]\n"
+  },
+  "after": {
+    "app/orders.py": "def first(orders):\n    return orders[0]\n\n\ndef last_n(orders, n):\n    \"\"\"Return the last n orders.\"\"\"\n    return orders[len(orders) - n - 1:]\n"
+  },
+  "expect": {
+    "must_find": [
+      {
+        "file": "app/orders.py",
+        "line": 7,
+        "keywords": [
+          "off-by-one",
+          "n+1",
+          "one extra",
+          "n + 1",
+          "extra",
+          "too many"
+        ],
+        "min_severity": "warning"
+      }
+    ]
+  }
+}

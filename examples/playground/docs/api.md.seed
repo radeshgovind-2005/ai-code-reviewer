@@ -1,0 +1,5 @@
+# Orders API
+
+## `last_n_orders(orders, n, include_cancelled=False)`
+
+Returns the last `n` orders. Pass `include_cancelled=True` to include cancelled orders.

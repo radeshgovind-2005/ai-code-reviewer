@@ -14,13 +14,15 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
-      - name: Unit tests
+      - name: Unit + end-to-end tests
         run: python -m unittest discover -s tests -v
 
       - name: Shell syntax
@@ -31,3 +33,53 @@ jobs:
 
       - name: Config is valid JSON
         run: jq empty review-config.json opencode.json
+
+      - name: Ruff
+        run: pipx run ruff==0.16.8 check scripts tests evals
+
+  opencode-integration:
+    # Real pinned OpenCode against a local mock model server: stdin prompt,
+    # JSON events, per-agent models, and the hardening against hostile PRs.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install OpenCode (same pin as review.yml)
+        run: |
+          version="$(sed -n 's/^ *default: "\([0-9.]*\)".*/\1/p' .github/workflows/review.yml | head -1)"
+          npm install -g "opencode-ai@${version}"
+      - name: Integration test
+        env:
+          OPENCODE_INTEGRATION: "1"
+        run: python3 -m unittest tests.test_opencode_integration -v
+
+  lint-workflows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: actionlint + zizmor
+        run: |
+          bash scripts/install-scanners.sh "$HOME/.local/bin"
+          export PATH="$HOME/.local/bin:$PATH"
+          actionlint .github/workflows/*.yml
+          zizmor --offline --min-severity medium .github/workflows/
+
+  scanners-integration:
+    # Real pinned scanners against the seeded playground (also proves the
+    # install script's checksums still match).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Install scanners
+        run: bash scripts/install-scanners.sh "$HOME/.local/bin"
+      - name: Integration test
+        env:
+          SCANNERS_INTEGRATION: "1"
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          python3 -m unittest tests.test_scanners_integration -v

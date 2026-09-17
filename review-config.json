@@ -11,7 +11,151 @@
     "*.key"
   ],
   "thresholds": {
-    "trivial": { "max_lines": 10, "max_files": 2 },
-    "lite": { "max_lines": 100, "max_files": 10 }
+    "trivial": {
+      "max_lines": 10,
+      "max_files": 2
+    },
+    "lite": {
+      "max_lines": 100,
+      "max_files": 10
+    }
+  },
+  "review": {
+    "max_parallel": 4,
+    "timeout": 600,
+    "overall_timeout": 1500,
+    "inactivity_timeout": 300,
+    "heartbeat": 30,
+    "retries": 1,
+    "resolve_fixed_threads": true,
+    "free_tier_model": "opencode/big-pickle"
+  },
+  "agents": {
+    "security": {
+      "model": "anthropic/claude-sonnet-4-6",
+      "fallback": [
+        "anthropic/claude-sonnet-4-5"
+      ],
+      "tiers": [
+        "trivial",
+        "lite",
+        "full"
+      ],
+      "paths": [
+        "**"
+      ]
+    },
+    "correctness": {
+      "model": "anthropic/claude-sonnet-4-6",
+      "fallback": [
+        "anthropic/claude-sonnet-4-5"
+      ],
+      "tiers": [
+        "trivial",
+        "lite",
+        "full"
+      ],
+      "paths": [
+        "**"
+      ]
+    },
+    "performance": {
+      "model": "anthropic/claude-sonnet-4-6",
+      "fallback": [
+        "anthropic/claude-sonnet-4-5"
+      ],
+      "tiers": [
+        "full"
+      ],
+      "paths": [
+        "**"
+      ]
+    },
+    "tests": {
+      "model": "anthropic/claude-haiku-4-5",
+      "fallback": [
+        "anthropic/claude-sonnet-4-5"
+      ],
+      "tiers": [
+        "lite",
+        "full"
+      ],
+      "paths": [
+        "**"
+      ]
+    },
+    "docs": {
+      "model": "anthropic/claude-haiku-4-5",
+      "fallback": [
+        "anthropic/claude-sonnet-4-5"
+      ],
+      "tiers": [
+        "lite",
+        "full"
+      ],
+      "paths": [
+        "*.md",
+        "*.mdx",
+        "*.rst",
+        "docs/",
+        "AGENTS.md",
+        "CHANGELOG*",
+        "openapi*",
+        "*.proto"
+      ]
+    },
+    "standards": {
+      "model": "anthropic/claude-sonnet-4-6",
+      "fallback": [
+        "anthropic/claude-sonnet-4-5"
+      ],
+      "tiers": [
+        "lite",
+        "full"
+      ],
+      "paths": [
+        "**"
+      ],
+      "requires_standards": true
+    }
+  },
+  "coordinator": {
+    "model": "anthropic/claude-opus-4-7",
+    "fallback": [
+      "anthropic/claude-sonnet-4-6",
+      "anthropic/claude-sonnet-4-5"
+    ],
+    "tiers": [
+      "lite",
+      "full"
+    ]
+  },
+  "scanners": {
+    "fail_on_error": false,
+    "gitleaks": {
+      "enabled": true,
+      "block_on": "low"
+    },
+    "osv": {
+      "enabled": true,
+      "block_on": "high"
+    },
+    "opengrep": {
+      "enabled": true,
+      "block_on": "none"
+    },
+    "trivy": {
+      "enabled": true,
+      "block_on": "critical"
+    },
+    "zizmor": {
+      "enabled": true,
+      "block_on": "high",
+      "ignore_rules": []
+    },
+    "actionlint": {
+      "enabled": true,
+      "block_on": "none"
+    }
   }
 }

@@ -1,0 +1,26 @@
+{
+  "description": "Refund reports success even when the DB write fails.",
+  "before": {
+    "app/refunds.py": "from .db import session, Order\n"
+  },
+  "after": {
+    "app/refunds.py": "from .db import session, Order\n\n\ndef refund(order_id):\n    try:\n        order = session.get(Order, order_id)\n        order.status = \"refunded\"\n        session.commit()\n    except Exception:\n        pass\n    return {\"ok\": True}\n"
+  },
+  "expect": {
+    "must_find": [
+      {
+        "file": "app/refunds.py",
+        "line": 10,
+        "line_tolerance": 4,
+        "keywords": [
+          "exception",
+          "swallow",
+          "silent",
+          "success",
+          "pass"
+        ],
+        "min_severity": "warning"
+      }
+    ]
+  }
+}

@@ -1,0 +1,26 @@
+import pickle
+import subprocess
+
+import yaml
+from flask import Flask, request
+
+app = Flask(__name__)
+
+
+@app.post("/convert")
+def convert():
+    filename = request.form["filename"]
+    subprocess.call("convert " + filename + " out.pdf", shell=True)
+    return "ok"
+
+
+@app.post("/import")
+def import_settings():
+    settings = yaml.load(request.data)
+    return {"keys": list(settings)}
+
+
+@app.post("/restore")
+def restore():
+    state = pickle.loads(request.data)
+    return {"restored": len(state)}

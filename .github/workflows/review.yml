@@ -17,38 +17,114 @@ on:
         required: false
         default: "1.18.31"
       model_timeout:
-        description: Seconds before the model call is abandoned.
+        description: Seconds before a model call is abandoned.
         type: number
         required: false
         default: 600
+      scanners:
+        description: Run the deterministic scanners (gitleaks, osv-scanner, opengrep, trivy, zizmor, actionlint).
+        type: boolean
+        required: false
+        default: true
     secrets:
       LLM_API_KEY:
-        required: true
+        description: Provider API key. Without it every reviewer runs on the free-tier model and the bot never approves.
+        required: false
+
+permissions: {}
 
 jobs:
+  scan:
+    name: Scanners
+    if: ${{ inputs.scanners }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ai-scan-${{ github.repository }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout target repo
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          path: target
+          persist-credentials: false
+
+      - name: Checkout ai-code-reviewer
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: radeshgovind-2005/ai-code-reviewer
+          ref: ${{ inputs.reviewer_ref }}
+          path: reviewer
+          persist-credentials: false
+
+      - name: Install scanners (pinned, checksum-verified)
+        run: |
+          bash "$GITHUB_WORKSPACE/reviewer/scripts/install-scanners.sh" "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Run scanners
+        id: scan
+        working-directory: target
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          REVIEWER_HOME: ${{ github.workspace }}/reviewer
+          OUT_DIR: ${{ runner.temp }}/scan
+        run: bash "$REVIEWER_HOME/scripts/run-scanners.sh"
+
+      - name: Upload scanner findings
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scanner-findings
+          path: |
+            ${{ runner.temp }}/scan/scanner-findings.json
+            ${{ runner.temp }}/scan/scanner-findings.sarif
+            ${{ runner.temp }}/scan/scanner-summary.md
+          if-no-files-found: ignore
+          retention-days: 14
+
   review:
+    name: AI Review
+    needs: scan
+    # Run even if the scanners found blocking issues, failed, or were disabled:
+    # the scan job's own red status is what blocks; the review adds context.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     # A newer push supersedes an in-flight review of the same PR.
     concurrency:
       group: ai-review-${{ github.repository }}-${{ github.event.pull_request.number }}
       cancel-in-progress: true
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read
       pull-requests: write
     steps:
       - name: Checkout target repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
           path: target
+          persist-credentials: false
 
       - name: Checkout ai-code-reviewer
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: radeshgovind-2005/ai-code-reviewer
           ref: ${{ inputs.reviewer_ref }}
           path: reviewer
+          persist-credentials: false
+
+      - name: Download scanner findings
+        if: ${{ inputs.scanners }}
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: scanner-findings
+          path: ${{ runner.temp }}/scan
 
       - name: Install OpenCode (pinned)
         env:
@@ -67,16 +143,27 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           REVIEWER_HOME: ${{ github.workspace }}/reviewer
           MODEL_TIMEOUT: ${{ inputs.model_timeout }}
+          SCANNER_FINDINGS: ${{ runner.temp }}/scan/scanner-findings.json
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          REVIEW_ARTIFACTS_DIR: ${{ runner.temp }}/review-artifacts
           AI_REVIEW_MARKER: ${{ runner.temp }}/ai-review-reported
-        run: |
-          chmod +x "$REVIEWER_HOME/scripts/run-review.sh"
-          "$REVIEWER_HOME/scripts/run-review.sh"
+        run: bash "$REVIEWER_HOME/scripts/run-review.sh"
+
+      - name: Upload review artifacts (prompts, per-reviewer metrics)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ai-review
+          path: ${{ runner.temp }}/review-artifacts
+          if-no-files-found: ignore
+          retention-days: 14
 
       # Fail closed even when the job dies before/around run-review.sh (checkout
       # or install failed, script killed). Skipped if the script already
       # posted its own review or failure review.
       - name: Report review did not complete
-        if: failure()
+        if: ${{ failure() }}
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}

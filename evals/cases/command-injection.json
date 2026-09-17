@@ -1,0 +1,26 @@
+{
+  "description": "shell=True with request-controlled filename.",
+  "before": {
+    "app/convert.py": "import subprocess\n"
+  },
+  "after": {
+    "app/convert.py": "import subprocess\n\nfrom flask import request\n\n\ndef convert():\n    name = request.args[\"file\"]\n    subprocess.run(f\"convert {name} out.pdf\", shell=True, check=True)\n    return \"ok\"\n"
+  },
+  "expect": {
+    "must_find": [
+      {
+        "file": "app/convert.py",
+        "line": 8,
+        "keywords": [
+          "inject",
+          "shell"
+        ],
+        "min_severity": "warning"
+      }
+    ],
+    "verdict_in": [
+      "changes_requested",
+      "approve_with_comments"
+    ]
+  }
+}

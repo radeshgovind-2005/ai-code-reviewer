@@ -1,0 +1,29 @@
+{
+  "description": "New admin endpoint without the admin check used elsewhere.",
+  "before": {
+    "app/admin.py": "from flask import Blueprint, abort\nfrom flask_login import current_user\n\nfrom .db import delete_user\n\nbp = Blueprint(\"admin\", __name__)\n\n\ndef require_admin():\n    if not current_user.is_admin:\n        abort(403)\n\n\n@bp.post(\"/admin/users/<int:uid>/ban\")\ndef ban(uid):\n    require_admin()\n    return {\"banned\": uid}\n"
+  },
+  "after": {
+    "app/admin.py": "from flask import Blueprint, abort\nfrom flask_login import current_user\n\nfrom .db import delete_user\n\nbp = Blueprint(\"admin\", __name__)\n\n\ndef require_admin():\n    if not current_user.is_admin:\n        abort(403)\n\n\n@bp.post(\"/admin/users/<int:uid>/ban\")\ndef ban(uid):\n    require_admin()\n    return {\"banned\": uid}\n\n\n@bp.post(\"/admin/users/<int:uid>/delete\")\ndef delete(uid):\n    delete_user(uid)\n    return {\"deleted\": uid}\n"
+  },
+  "expect": {
+    "must_find": [
+      {
+        "file": "app/admin.py",
+        "line": 22,
+        "line_tolerance": 3,
+        "keywords": [
+          "admin",
+          "authori",
+          "permission",
+          "require_admin",
+          "auth"
+        ],
+        "min_severity": "critical"
+      }
+    ],
+    "verdict_in": [
+      "changes_requested"
+    ]
+  }
+}

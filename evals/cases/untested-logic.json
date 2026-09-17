@@ -1,0 +1,23 @@
+{
+  "description": "New branching business logic with no tests (tests/ exists).",
+  "tier": "lite",
+  "before": {
+    "app/shipping.py": "def cost(weight):\n    return 5\n",
+    "tests/test_shipping.py": "from app.shipping import cost\n\n\ndef test_cost():\n    assert cost(1) == 5\n"
+  },
+  "after": {
+    "app/shipping.py": "def cost(weight, country=\"PT\", express=False):\n    base = 5 if weight <= 2 else 5 + (weight - 2) * 1.5\n    if country not in (\"PT\", \"ES\"):\n        base *= 2\n    if express:\n        base += 10\n    return base\n",
+    "tests/test_shipping.py": "from app.shipping import cost\n\n\ndef test_cost():\n    assert cost(1) == 5\n"
+  },
+  "expect": {
+    "must_find": [
+      {
+        "file": "app/shipping.py",
+        "keywords": [
+          "test"
+        ],
+        "min_severity": "suggestion"
+      }
+    ]
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "description": "User input interpolated into SQL.",
+  "before": {
+    "app/users.py": "from .db import conn\n\n\ndef get_user(user_id: int):\n    cur = conn.cursor()\n    cur.execute(\"SELECT id, name FROM users WHERE id = %s\", (user_id,))\n    return cur.fetchone()\n"
+  },
+  "after": {
+    "app/users.py": "from .db import conn\n\n\ndef get_user(user_id: int):\n    cur = conn.cursor()\n    cur.execute(\"SELECT id, name FROM users WHERE id = %s\", (user_id,))\n    return cur.fetchone()\n\n\ndef search_users(name: str):\n    \"\"\"Called from the /search endpoint with the raw query string.\"\"\"\n    cur = conn.cursor()\n    cur.execute(f\"SELECT id, name FROM users WHERE name LIKE '%{name}%'\")\n    return cur.fetchall()\n"
+  },
+  "expect": {
+    "must_find": [
+      {
+        "file": "app/users.py",
+        "line": 13,
+        "keywords": [
+          "sql",
+          "inject",
+          "parameter"
+        ],
+        "min_severity": "warning"
+      }
+    ],
+    "verdict_in": [
+      "changes_requested",
+      "approve_with_comments"
+    ]
+  }
+}
