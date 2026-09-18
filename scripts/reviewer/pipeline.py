@@ -51,6 +51,7 @@ class ReviewInputs:
     previous_threads: list = field(default_factory=list)
     pr_title: str = ""
     pr_body: str = ""
+    coverage: dict = field(default_factory=dict)
     model_timeout: int | None = None
     free_tier: bool = False
     out_dir: str | None = None
@@ -139,12 +140,25 @@ def shared_context(inp: ReviewInputs, nonce: str) -> str:
     return "\n".join(parts)
 
 
+def coverage_section(report):
+    stats = report.get("src_stats") or {}
+    lines = ["## Changed-line coverage (diff-cover, from the repo's test run)",
+             f"Overall: {report.get('total_percent_covered', '?')}% of {report.get('total_num_lines', '?')} changed lines covered."]
+    for path, st in sorted(stats.items()):
+        missing = st.get("violation_lines") or []
+        shown = ", ".join(str(n) for n in missing[:30]) + (" …" if len(missing) > 30 else "")
+        lines.append(f"- `{path}`: {st.get('percent_covered', '?')}% covered" + (f"; uncovered lines: {shown}" if missing else ""))
+    return "\n".join(lines)
+
+
 def agent_prompt(inp, name, entry, shared, applicable_standards):
     home = Path(inp.reviewer_home)
     role = (home / entry.get("prompt", f"agents/{name}.md")).read_text().strip()
     extra = ""
     if entry.get("requires_standards") and applicable_standards:
         extra = "\n\n## Engineering standards\n" + standards_mod.to_prompt(applicable_standards)
+    if entry.get("wants_coverage") and inp.coverage:
+        extra += "\n\n" + coverage_section(inp.coverage)
     return (f"{shared}{extra}\n\n{role}\n\nReviewer id: {name}\n\n"
             "Review the diff above per your instructions. Respond with only the JSON object described in the Output format section.")
 

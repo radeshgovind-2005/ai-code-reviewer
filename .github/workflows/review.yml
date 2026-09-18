@@ -21,6 +21,16 @@ on:
         type: number
         required: false
         default: 600
+      coverage_artifact:
+        description: Name of an artifact from this workflow run containing a coverage report (optional).
+        type: string
+        required: false
+        default: ""
+      coverage_path:
+        description: Path of the coverage report inside that artifact (Cobertura XML, JaCoCo XML or LCOV).
+        type: string
+        required: false
+        default: coverage.xml
       scanners:
         description: Run the deterministic scanners (gitleaks, osv-scanner, opengrep, trivy, zizmor, actionlint).
         type: boolean
@@ -126,6 +136,14 @@ jobs:
           name: scanner-findings
           path: ${{ runner.temp }}/scan
 
+      - name: Download coverage report
+        if: ${{ inputs.coverage_artifact != '' }}
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ inputs.coverage_artifact }}
+          path: ${{ runner.temp }}/coverage
+
       - name: Install OpenCode (pinned)
         env:
           OPENCODE_VERSION: ${{ inputs.opencode_version }}
@@ -144,6 +162,7 @@ jobs:
           REVIEWER_HOME: ${{ github.workspace }}/reviewer
           MODEL_TIMEOUT: ${{ inputs.model_timeout }}
           SCANNER_FINDINGS: ${{ runner.temp }}/scan/scanner-findings.json
+          COVERAGE_REPORT: ${{ inputs.coverage_artifact != '' && format('{0}/coverage/{1}', runner.temp, inputs.coverage_path) || '' }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
           REVIEW_ARTIFACTS_DIR: ${{ runner.temp }}/review-artifacts

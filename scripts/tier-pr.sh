@@ -36,11 +36,9 @@ if [ -z "${CONFIG_FILE:-}" ]; then
   fi
 fi
 
-EXCLUDES=()
-while IFS= read -r p; do
-  [[ -z "$p" || "$p" == \#* ]] && continue
-  EXCLUDES+=("$p")
-done < "${REVIEWER_HOME}/scripts/diff-excludes.txt"
+# shellcheck source=scripts/lib.sh
+source "${REVIEWER_HOME}/scripts/lib.sh"
+load_excludes
 
 SENSITIVE_PATHS=()
 while IFS= read -r p; do

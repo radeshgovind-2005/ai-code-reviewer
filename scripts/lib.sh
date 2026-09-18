@@ -21,6 +21,8 @@ resolve_config() {
 }
 
 # load_excludes -> fills global EXCLUDES array from scripts/diff-excludes.txt
+# plus the config's "diff_excludes" globs (e.g. "generated/**"), if CONFIG_FILE
+# is set. Database migrations are never excluded, whatever the config says.
 load_excludes() {
   EXCLUDES=()
   local p
@@ -28,4 +30,11 @@ load_excludes() {
     [[ -z "$p" || "$p" == \#* ]] && continue
     EXCLUDES+=("$p")
   done < "${REVIEWER_HOME}/scripts/diff-excludes.txt"
+  if [ -n "${CONFIG_FILE:-}" ] && [ -f "${CONFIG_FILE}" ]; then
+    while IFS= read -r p; do
+      [ -z "$p" ] && continue
+      [[ "$p" == *migration* ]] && continue
+      EXCLUDES+=(":(exclude,glob)${p}")
+    done < <(jq -r '(.diff_excludes // [])[] | strings' "${CONFIG_FILE}")
+  fi
 }

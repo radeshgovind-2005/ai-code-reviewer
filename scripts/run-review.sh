@@ -16,6 +16,9 @@ set -Eeuo pipefail
 #                       are shown to the model (so it doesn't repeat them) and
 #                       added to the review body; blocking ones force
 #                       REQUEST_CHANGES
+#   COVERAGE_REPORT   - coverage report (Cobertura XML / JaCoCo / LCOV) from the
+#                       consumer's test job; diff-cover turns it into
+#                       changed-line coverage for the tests reviewer
 #   AI_REVIEW_MARKER  - file touched once this script has posted a review (or a
 #                       failure review), so the workflow's if: failure() step
 #                       doesn't post a second one
@@ -334,6 +337,20 @@ if [ "${DRY_RUN:-0}" != 1 ]; then
     || echo "warning: could not load previous review threads; reviewing from scratch" >&2
 fi
 
+# Changed-line coverage (optional, never fatal).
+COVERAGE_FLAG=()
+if [ -n "${COVERAGE_REPORT:-}" ] && [ -s "${COVERAGE_REPORT}" ]; then
+  COVERAGE_JSON="${WORK_DIR}/coverage.json"
+  DIFF_COVER=(diff-cover)
+  command -v diff-cover > /dev/null || DIFF_COVER=(pipx run --spec "diff-cover==10.5.1" diff-cover)
+  if "${DIFF_COVER[@]}" "${COVERAGE_REPORT}" --compare-branch "${BASE_SHA}" --format "json:${COVERAGE_JSON}" > /dev/null 2>&1 \
+      && [ -s "${COVERAGE_JSON}" ]; then
+    COVERAGE_FLAG=(--coverage "${COVERAGE_JSON}")
+  else
+    echo "warning: diff-cover could not process ${COVERAGE_REPORT}; tests reviewer runs without coverage" >&2
+  fi
+fi
+
 SENSITIVE_FLAG=""
 [ "${SENSITIVE}" = "true" ] && SENSITIVE_FLAG="--sensitive"
 FREE_TIER_FLAG=""
@@ -348,7 +365,7 @@ python3 "${REVIEWER_HOME}/scripts/review.py" \
     --reviewer-home "${REVIEWER_HOME}" --repo-dir "${REPO_ROOT}" --config "${CONFIG_FILE}" \
     --annotated "${ANNOTATED_DIFF_FILE}" --changed-files "${CHANGED_FILES}" \
     --tier "${TIER}" --reason "${REASON}" ${SENSITIVE_FLAG} --base-sha "${BASE_SHA}" \
-    --omitted "${OMITTED_FILE}" "${SCANNER_FLAG[@]}" --previous-threads "${PREVIOUS_THREADS}" \
+    --omitted "${OMITTED_FILE}" "${SCANNER_FLAG[@]}" --previous-threads "${PREVIOUS_THREADS}" "${COVERAGE_FLAG[@]}" \
     ${FREE_TIER_FLAG} --out-dir "${AGENT_DIR}" \
   || REVIEW_EXIT=$?
 if [ -n "${REVIEW_ARTIFACTS_DIR:-}" ]; then

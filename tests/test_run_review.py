@@ -534,6 +534,57 @@ class RunReview(unittest.TestCase):
         self.run_review(CLEAN)
         self.assertNotIn("standards", self.reviewers_called())
 
+    # -- context ---------------------------------------------------------
+    def test_coverage_goes_to_tests_reviewer_only(self):
+        fake_dc = self.bin / "diff-cover"
+        fake_dc.write_text("#!/usr/bin/env bash\n"
+                           "for a in \"$@\"; do case \"$a\" in json:*) out=\"${a#json:}\";; esac; done\n"
+                           "echo '{\"total_percent_covered\": 40, \"total_num_lines\": 30, \"src_stats\": "
+                           "{\"src/values.js\": {\"percent_covered\": 40.0, \"violation_lines\": [3, 4, 5]}}}' > \"$out\"\n")
+        fake_dc.chmod(0o755)
+        report = self.fake / "coverage.xml"
+        report.write_text("<coverage/>")
+        self.write("src/values.js", BIG_CHANGE)
+        self.commit("pr")
+        r = self.run_review(CLEAN, COVERAGE_REPORT=str(report))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("uncovered lines: 3, 4, 5", (self.fake / "prompt-tests.txt").read_text())
+        self.assertNotIn("Changed-line coverage", (self.fake / "prompt-security.txt").read_text())
+
+    def test_broken_coverage_is_not_fatal(self):
+        (self.bin / "diff-cover").write_text("#!/usr/bin/env bash\nexit 1\n")
+        (self.bin / "diff-cover").chmod(0o755)
+        report = self.fake / "coverage.xml"
+        report.write_text("<coverage/>")
+        self.write("src/values.js", BIG_CHANGE)
+        self.commit("pr")
+        r = self.run_review(CLEAN, COVERAGE_REPORT=str(report))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("diff-cover could not process", r.stderr)
+
+    def test_config_diff_excludes_but_never_migrations(self):
+        self.write("review-config.json", json.dumps({"diff_excludes": ["generated/**", "db/migrations/**"]}))
+        self.base = self.commit("base config")
+        self.write("generated/api.js", BIG_CHANGE * 10)
+        self.write("db/migrations/001_init.sql", "ALTER TABLE users DROP COLUMN email;\n")
+        self.commit("pr")
+        r = self.run_review(CLEAN)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("tier=trivial", r.stdout)
+        prompt = (self.fake / "prompt.txt").read_text()
+        self.assertNotIn("generated/api.js", prompt)
+        self.assertIn("DROP COLUMN", prompt)
+
+    # -- dry run ---------------------------------------------------------
+    def test_dry_run_posts_nothing(self):
+        self.write("src/values.js", BIG_CHANGE)
+        self.commit("pr")
+        out = self.fake / "dry.json"
+        r = self.run_review(CRITICAL, DRY_RUN="1", DRY_RUN_OUT=str(out))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.gh_calls(), [])
+        self.assertEqual(json.loads(out.read_text())["event"], "REQUEST_CHANGES")
+
     # -- re-review -------------------------------------------------------
     def threads(self, *nodes):
         (self.fake / "threads.json").write_text(json.dumps(

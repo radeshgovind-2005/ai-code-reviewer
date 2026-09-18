@@ -58,6 +58,7 @@ def main():
     ap.add_argument("--omitted")
     ap.add_argument("--scanner-findings")
     ap.add_argument("--previous-threads")
+    ap.add_argument("--coverage", help="diff-cover JSON report")
     ap.add_argument("--free-tier", action="store_true")
     ap.add_argument("--out-dir", required=True)
     args = ap.parse_args()
@@ -85,6 +86,7 @@ def main():
         pr_title=os.environ.get("PR_TITLE", ""),
         pr_body=os.environ.get("PR_BODY", ""),
         model_timeout=int(timeout) if timeout and timeout.isdigit() else None,
+        coverage=read_json(args.coverage, {}),
         free_tier=args.free_tier,
         out_dir=args.out_dir,
     )
